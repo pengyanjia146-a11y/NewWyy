@@ -1,5 +1,4 @@
-// App.tsx 中的 handleFileChange 方法
-
+// 在 App 组件内部
 const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -10,23 +9,16 @@ const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     reader.onload = async (event) => {
         const code = event.target?.result as string;
         if (code) {
-            // 调用 service 进行安装
+            // 将读取到的 JS 字符串传入 service
             const success = await musicService.importPlugin(code);
             if (success) {
-                // 更新 UI 上的插件列表
                 setInstalledPlugins([...musicService.getPlugins()]);
-                showToast('插件导入成功', 'success');
+                showToast('插件安装成功', 'success');
             } else {
-                showToast('插件解析失败，请检查格式', 'error');
+                showToast('插件格式错误', 'error');
             }
         }
         setPluginLoading(false);
     };
-
-    reader.onerror = () => {
-        showToast('文件读取失败', 'error');
-        setPluginLoading(false);
-    };
-
-    reader.readAsText(file); // 以文本格式读取 JS 文件
+    reader.readAsText(file);
 };
