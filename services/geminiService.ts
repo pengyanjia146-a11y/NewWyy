@@ -23,22 +23,29 @@ export class ClientSideService {
     'Referer': 'https://www.bilibili.com/'
   };
 
-  // High availability Piped instances list
+  // Browser Simulation Headers for YouTube
+  private youtubeHeaders = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Referer': 'https://www.youtube.com/',
+    'Accept-Language': 'en-US,en;q=0.9'
+  };
+
+  // High availability Piped instances list (Public Mirrors)
   private pipedInstances = [
     "https://pipedapi.kavin.rocks",
-    "https://api.piped.ot.ax",
-    "https://pipedapi.drg.li", 
     "https://api.piped.video",
+    "https://pipedapi.drg.li", 
     "https://piped-api.lunar.icu",
     "https://api.piped.yt",
-    "https://ytapi.dc09.ru"
+    "https://ytapi.dc09.ru",
+    "https://pipedapi.system41.cl"
   ];
 
   private activePipedInstance = this.pipedInstances[0]; // Cache the working instance
 
   private plugins: any[] = [];
   private guestCookie = '';
-  private apiBaseUrl = ''; // Still kept for Bilibili proxy if needed, but optional for YT
+  private apiBaseUrl = ''; // Optional backend
   private logs: string[] = [];
   
   constructor() {
@@ -57,7 +64,7 @@ export class ClientSideService {
   public clearLogs() { this.logs = []; }
 
   // --- Config ---
-  setApiBaseUrl(url: string) { this.apiBaseUrl = url.replace(/\/$/, ''); this.log(`Backend: ${this.apiBaseUrl}`); }
+  setApiBaseUrl(url: string) { this.apiBaseUrl = url.replace(/\/$/, ''); }
   setSearchTimeout(ms: number) { /* No-op */ }
   setCustomInvidiousUrl(url: string) { /* No-op */ }
 
@@ -120,8 +127,8 @@ export class ClientSideService {
     const taskBilibili = this.timeoutPromise(this.searchBilibili(query), 5000, [])
         .then(songs => { if(songs.length) onProgress(songs); });
 
-    // 3. YouTube (Standalone Piped, 10s Timeout for network hops)
-    const taskYoutube = this.timeoutPromise(this.searchYouTube(query), 10000, [])
+    // 3. YouTube (Standalone Piped, 12s Timeout to allow rotation)
+    const taskYoutube = this.timeoutPromise(this.searchYouTube(query), 12000, [])
         .then(songs => { if(songs.length) onProgress(songs); });
 
     // 4. Plugins (8s Timeout)
@@ -131,7 +138,7 @@ export class ClientSideService {
     );
 
     await Promise.allSettled([taskNetease, taskBilibili, taskYoutube, ...taskPlugins]);
-    this.log("All search tasks finished/timed out.");
+    this.log("All search tasks finished.");
   }
 
   // --- Search Implementations ---
@@ -145,24 +152,20 @@ export class ClientSideService {
 
       for (const instance of sortedInstances) {
           try {
-              this.log(`Trying Piped: ${instance}`);
-              // Use filter=music_videos to get official audio/MV results
+              this.log(`Piped Search: ${instance}`);
               const url = `${instance}/search?q=${encodeURIComponent(keyword)}&filter=music_videos`;
               
               const response = await CapacitorHttp.get({ 
                   url, 
                   connectTimeout: 5000,
-                  headers: {
-                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                  }
+                  headers: this.youtubeHeaders
               });
 
               let data = response.data;
               if (typeof data === 'string') { try { data = JSON.parse(data); } catch(e){} }
 
               if (data && data.items && Array.isArray(data.items)) {
-                  this.activePipedInstance = instance; // Success! Remember this instance
-                  this.log(`Piped Success: ${instance}`);
+                  this.activePipedInstance = instance; // Mark as reliable
                   
                   return data.items.map((item: any) => ({
                       id: item.url.split('/watch?v=')[1],
@@ -176,12 +179,10 @@ export class ClientSideService {
                   }));
               }
           } catch(e: any) {
-              this.log(`Piped instance ${instance} failed: ${e.message}`);
+              this.log(`Piped error: ${e.message || e}`);
               // Continue to next instance
           }
       }
-
-      this.log("All Piped instances failed.");
       return [];
   }
 
@@ -216,20 +217,16 @@ export class ClientSideService {
   }
 
   private async searchBilibili(keyword: string): Promise<Song[]> {
-      // 1. Prioritize Backend (Proxy with Headers) if available
       if (this.apiBaseUrl) {
           try {
               const url = `${this.apiBaseUrl}/api/search/bilibili?q=${encodeURIComponent(keyword)}`;
               const response = await CapacitorHttp.get({ url, connectTimeout: 4000 });
               let data = response.data;
               if (typeof data === 'string') { try { data = JSON.parse(data); } catch(e){} }
-              if (data && Array.isArray(data.songs)) {
-                   return data.songs;
-              }
+              if (data && Array.isArray(data.songs)) return data.songs;
           } catch(e) { }
       }
 
-      // 2. Fallback Direct
       try {
           const url = `https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${encodeURIComponent(keyword)}`;
           const response = await CapacitorHttp.get({ url, headers: this.bilibiliHeaders, connectTimeout: 4000 });
@@ -268,15 +265,19 @@ export class ClientSideService {
       return [];
   }
 
-  // --- Audio Proxy ---
+  // --- Audio Proxy (Local Browser Simulation) ---
+  // Downloads the stream chunk by chunk (handled by native OS) and creates a local Blob URL.
+  // This bypasses 403 Forbidden because the request comes from the "browser" (Capacitor) 
+  // with correct headers, not from an Audio element which is restricted.
   private async getProxiedAudioUrl(url: string, referer: string): Promise<string> {
       try {
+          this.log(`Proxying audio: ${url.substring(0, 30)}...`);
           const res = await CapacitorHttp.get({
               url: url,
               responseType: 'blob',
               headers: { 
                   'Referer': referer,
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                  'User-Agent': this.youtubeHeaders['User-Agent']
               }
           });
           if (res.data) {
@@ -286,14 +287,18 @@ export class ClientSideService {
              const array = new Uint8Array(binary.length);
              for(let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
              const blob = new Blob([array], { type: mime });
-             return URL.createObjectURL(blob);
+             const blobUrl = URL.createObjectURL(blob);
+             this.log(`Proxy success: ${blobUrl}`);
+             return blobUrl;
           }
-      } catch (e) {}
-      return url; 
+      } catch (e) {
+          this.log(`Proxy failed: ${e}`);
+      }
+      return url; // Fallback to original URL
   }
 
   async getSongDetails(song: Song, quality: AudioQuality = 'standard'): Promise<SongPlayDetails> {
-      // --- YOUTUBE STANDALONE ---
+      // --- YOUTUBE STANDALONE (Browser Simulation) ---
       if (song.source === MusicSource.YOUTUBE) {
           const sortedInstances = [
               this.activePipedInstance,
@@ -302,22 +307,20 @@ export class ClientSideService {
 
           for (const instance of sortedInstances) {
                try {
-                   this.log(`Resolving YT stream: ${instance}`);
+                   this.log(`Resolving YT: ${instance}`);
                    const res = await CapacitorHttp.get({ 
                        url: `${instance}/streams/${song.id}`, 
                        connectTimeout: 5000,
-                       headers: {
-                           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                       }
+                       headers: this.youtubeHeaders
                    });
                    
                    let data = res.data;
                    if (typeof data === 'string') { try { data = JSON.parse(data); } catch(e){} }
                    
                    if (data && data.audioStreams && data.audioStreams.length > 0) {
-                       this.activePipedInstance = instance; // Update preferred instance
+                       this.activePipedInstance = instance;
                        
-                       // Priority: m4a (better compatibility) > webm, highest bitrate
+                       // Select Best Audio
                        const streams = data.audioStreams;
                        const preferredStream = 
                            streams.find((s: any) => s.mimeType === 'audio/mp4' && s.quality === 'highest') ||
@@ -325,7 +328,15 @@ export class ClientSideService {
                            streams.sort((a: any, b: any) => b.bitrate - a.bitrate)[0];
 
                        if (preferredStream) {
-                           return { url: preferredStream.url };
+                           let finalUrl = preferredStream.url;
+                           
+                           // CRITICAL: If URL is direct googlevideo.com, Proxy it locally to simulate browser headers.
+                           // Otherwise the HTML5 Audio tag will fail with 403.
+                           if (finalUrl.includes('googlevideo.com')) {
+                               finalUrl = await this.getProxiedAudioUrl(finalUrl, 'https://www.youtube.com/');
+                           }
+                           
+                           return { url: finalUrl };
                        }
                    }
                } catch(e) {
@@ -335,21 +346,19 @@ export class ClientSideService {
           return { url: '' };
       }
       
-      // 2. Bilibili
+      // 2. Bilibili (With Proxy)
       if (song.source === MusicSource.BILIBILI) {
           let url = '';
-          // Backend fallback
           if (this.apiBaseUrl) {
               try {
                   const res = await CapacitorHttp.get({ url: `${this.apiBaseUrl}/api/url?id=${song.id}&source=BILIBILI`, connectTimeout: 5000 });
                   if (res.status === 200 && res.data?.url) url = res.data.url;
               } catch(e) {}
           }
-          // Direct fallback
-          if (!url) {
-              url = await this.getBilibiliUrl(song.id);
-          }
+          if (!url) url = await this.getBilibiliUrl(song.id);
+          
           if (url) {
+              // Always proxy Bilibili to handle Referer
               const proxied = await this.getProxiedAudioUrl(url, 'https://www.bilibili.com/');
               return { url: proxied };
           }
@@ -365,7 +374,7 @@ export class ClientSideService {
       return { url: '' };
   }
 
-  // Netease details (Keep existing logic)
+  // Netease details
   private async getNeteaseDetails(song: Song, quality: AudioQuality): Promise<SongPlayDetails> {
       try {
            let br = 128000; let level = 'standard';
@@ -416,29 +425,16 @@ export class ClientSideService {
 
   // --- Helpers ---
   async runDiagnostics(): Promise<DiagnosticResult[]> { 
-      // Simple diagnostic to check Piped connectivity
       const results: DiagnosticResult[] = [];
-      
       const pipedStart = Date.now();
       try {
           const res = await CapacitorHttp.get({ url: `${this.activePipedInstance}/`, connectTimeout: 3000 });
           if (res.status === 200) {
-              results.push({ name: 'Piped API (Active)', status: 'ok', latency: Date.now() - pipedStart, message: this.activePipedInstance });
-          } else {
-               throw new Error('Non-200');
-          }
+              results.push({ name: 'YouTube (Piped)', status: 'ok', latency: Date.now() - pipedStart, message: 'Connected' });
+          } else throw new Error();
       } catch(e) {
-          results.push({ name: 'Piped API (Active)', status: 'error', latency: 0, message: 'Connection Failed' });
+          results.push({ name: 'YouTube (Piped)', status: 'error', latency: 0, message: 'Failed' });
       }
-
-      const neteaseStart = Date.now();
-      try {
-          await CapacitorHttp.get({ url: 'https://music.163.com', connectTimeout: 3000 });
-          results.push({ name: 'Netease Music', status: 'ok', latency: Date.now() - neteaseStart, message: 'Connected' });
-      } catch(e) {
-          results.push({ name: 'Netease Music', status: 'error', latency: 0, message: 'Connection Failed' });
-      }
-      
       return results;
   } 
 
