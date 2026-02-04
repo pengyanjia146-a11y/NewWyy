@@ -1,6 +1,6 @@
 
-import { CapacitorHttp } from '@capacitor/core';
-import { Song, MusicSource, AudioQuality, Artist, Playlist, DiagnosticResult } from "../types";
+import { CapacitorHttp, HttpResponse } from '@capacitor/core';
+import { Song, MusicSource, AudioQuality, Artist, Playlist, DiagnosticResult, MusicPlugin } from "../types";
 
 // Polyfill-like helper for Promise.any
 function customPromiseAny<T>(promises: Promise<T>[]): Promise<T> {
@@ -77,7 +77,7 @@ export class ClientSideService {
   ];
 
   private activePipedInstance = "https://pipedapi.kavin.rocks"; 
-  private plugins: any[] = [];
+  private plugins: MusicPlugin[] = [];
   private guestCookie = '';
   private apiBaseUrl = ''; 
   private logs: string[] = [];
@@ -167,11 +167,31 @@ export class ClientSideService {
         .then(songs => { if(songs.length) onProgress(songs); })
         .catch(() => { this.log("YouTube Search All Failed"); });
 
-    // 4. Plugins
-    const taskPlugins = this.plugins.map(p => 
-        this.timeoutPromise(this.searchPlugin(p, query), 8000, [])
-            .then(songs => { if(songs.length) onProgress(songs); })
-    );
+    // 4. Plugins (Parallel Execution)
+    const taskPlugins = this.plugins.map(async (plugin) => {
+        try {
+            if (typeof plugin.search === 'function') {
+                const results = await this.timeoutPromise(plugin.search(query, 1, 'music'), 8000, []);
+                if (Array.isArray(results) && results.length > 0) {
+                    const mappedSongs: Song[] = results.map(r => ({
+                        id: String(r.id || r.cid || r.hash),
+                        title: r.title || r.name,
+                        artist: r.artist || r.author || 'Unknown',
+                        album: r.album || r.platform || plugin.name,
+                        coverUrl: r.artwork || r.cover || '',
+                        source: MusicSource.PLUGIN,
+                        duration: r.duration || 0,
+                        pluginId: plugin.id,
+                        isGray: false
+                    }));
+                    this.log(`Plugin [${plugin.name}] found ${mappedSongs.length} songs`);
+                    onProgress(mappedSongs);
+                }
+            }
+        } catch(e: any) {
+            this.log(`Plugin [${plugin.name}] search failed: ${e.message}`);
+        }
+    });
 
     await Promise.allSettled([taskNetease, taskBilibili, taskYoutube, ...taskPlugins]);
   }
@@ -336,86 +356,87 @@ export class ClientSideService {
       return 0;
   }
 
-  // --- Plugin Logic ---
-
-  private async searchPlugin(plugin: any, query: string): Promise<Song[]> {
-      try {
-          if (plugin.search) {
-              // Support both async and sync
-              const results = await plugin.search(query);
-              if (Array.isArray(results)) {
-                  return results.map((r: any) => ({ 
-                      ...r, 
-                      source: MusicSource.PLUGIN, 
-                      pluginId: plugin.id, 
-                      isGray: false 
-                  }));
-              }
-          }
-      } catch (e) {
-          this.log(`Plugin ${plugin.name} search error: ${e}`);
-      }
-      return [];
-  }
+  // --- Dynamic Plugin System (Sandboxed) ---
 
   async importPlugin(code: string): Promise<boolean> {
       try {
-          // Emulate a CommonJS environment for MusicFree-style plugins
-          const wrapper = new Function('module', 'exports', 'require', `
-              ${code};
-              return module.exports;
-          `);
+          this.log("Initializing plugin sandbox...");
           
-          const module = { exports: {} };
-          const exports = module.exports;
-          const require = () => { throw new Error("Require is not supported in browser environment"); };
-          
-          const pluginInstance = wrapper(module, exports, require);
-          
-          // Validate plugin structure
-          if (!pluginInstance) throw new Error("No export found");
-          
-          // Normalize structure
-          const plugin = {
-              id: pluginInstance.id || pluginInstance.platform || `plugin_${Date.now()}`,
-              name: pluginInstance.name || pluginInstance.platform || 'Unknown Plugin',
-              version: pluginInstance.version || '0.0.1',
-              author: pluginInstance.author || 'Unknown',
-              source: 'PLUGIN',
-              search: pluginInstance.search, // The critical function
-              getMediaUrl: pluginInstance.getMediaUrl || pluginInstance.play, // Some use play, some getMediaUrl
-              originalCode: code
+          // 1. Create a Network Bridge for the plugin
+          // This maps standard `fetch` calls inside the plugin to `CapacitorHttp`
+          // bypassing CORS restrictions on Android/Web
+          const bridgeFetch = async (url: string, options: any = {}) => {
+              try {
+                  const response = await CapacitorHttp.request({
+                      url,
+                      method: options.method || 'GET',
+                      headers: options.headers,
+                      data: options.body,
+                      connectTimeout: 10000,
+                  });
+                  
+                  // Mock the standard Response object
+                  return {
+                      ok: response.status >= 200 && response.status < 300,
+                      status: response.status,
+                      text: async () => typeof response.data === 'string' ? response.data : JSON.stringify(response.data),
+                      json: async () => typeof response.data === 'object' ? response.data : JSON.parse(response.data),
+                      headers: {
+                          get: (key: string) => response.headers[key] || response.headers[key.toLowerCase()]
+                      }
+                  };
+              } catch (e: any) {
+                  console.error("Plugin Network Error", e);
+                  throw e;
+              }
           };
-          
-          if (!plugin.search) throw new Error("Plugin missing search function");
 
-          // Remove existing if same ID
-          this.plugins = this.plugins.filter(p => p.id !== plugin.id);
-          this.plugins.push(plugin);
+          // 2. Prepare Sandbox Context
+          // We emulate a CommonJS environment (module.exports)
+          const sandbox = {
+              module: { exports: {} },
+              fetch: bridgeFetch,
+              console: console, // Allow plugins to log
+          };
+
+          // 3. Execute the Code
+          // We use `new Function` to wrap the plugin code.
+          // Note: This is "secure enough" for user-imported scripts in a music app context,
+          // but not true isolation (like WebWorkers).
+          const runPlugin = new Function('module', 'exports', 'fetch', 'console', code);
+          runPlugin(sandbox.module, sandbox.module.exports, sandbox.fetch, sandbox.console);
+
+          // 4. Validate Plugin Protocol
+          const plugin = sandbox.module.exports as any;
           
-          this.log(`Plugin Loaded: ${plugin.name} v${plugin.version}`);
+          if (!plugin.platform && !plugin.id) throw new Error("Plugin missing 'platform' or 'id'");
+          if (typeof plugin.search !== 'function') throw new Error("Plugin missing 'search' function");
+
+          // 5. Normalize and Store
+          const normalizedPlugin: MusicPlugin = {
+              id: plugin.platform || plugin.id,
+              name: plugin.name || plugin.platform || 'Unknown Plugin',
+              version: plugin.version || '0.0.1',
+              author: plugin.author || 'Unknown',
+              sources: plugin.srcUrl ? [plugin.srcUrl] : [],
+              status: 'active',
+              search: plugin.search,
+              getMediaUrl: plugin.getMediaUrl || plugin.play // Compatibility with different standards
+          };
+
+          // Remove existing plugin with same ID (update)
+          this.plugins = this.plugins.filter(p => p.id !== normalizedPlugin.id);
+          this.plugins.push(normalizedPlugin);
+          
+          this.log(`Plugin [${normalizedPlugin.name}] loaded successfully.`);
           return true;
-      } catch (e) {
-          console.error("Plugin Import Error:", e);
-          this.log(`Plugin Error: ${e}`);
+      } catch (e: any) {
+          console.error("Plugin Import Failed:", e);
+          this.log(`Plugin Error: ${e.message}`);
           return false;
       }
   }
 
-  async installPluginFromUrl(url: string): Promise<boolean> {
-      try {
-          const res = await CapacitorHttp.get({ url });
-          if (res.data) {
-              // Handle string or object data
-              const code = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
-              return await this.importPlugin(code);
-          }
-      } catch(e) {
-          this.log(`Install URL failed: ${e}`);
-      }
-      return false;
-  }
-  
   getPlugins() { return this.plugins; }
 
   // --- Audio Proxy (Local Blob) ---
@@ -451,6 +472,26 @@ export class ClientSideService {
   }
 
   async getSongDetails(song: Song, quality: AudioQuality = 'standard'): Promise<SongPlayDetails> {
+      // --- PLUGIN PLAYBACK ---
+      if (song.source === MusicSource.PLUGIN && song.pluginId) {
+          const plugin = this.plugins.find(p => p.id === song.pluginId);
+          if (plugin && plugin.getMediaUrl) {
+              try {
+                  this.log(`Fetching from plugin: ${plugin.name}`);
+                  const result = await plugin.getMediaUrl(song);
+                  // Normalize result (string vs object)
+                  const url = typeof result === 'string' ? result : (result?.url || '');
+                  const lyric = typeof result === 'object' && result.lyric ? result.lyric : undefined;
+                  
+                  if (!url) throw new Error("Plugin returned empty URL");
+                  return { url, lyric };
+              } catch (e: any) {
+                  this.log(`Plugin playback error: ${e.message}`);
+                  // Fallthrough to return empty
+              }
+          }
+      }
+
       // --- YOUTUBE PLAYBACK ---
       if (song.source === MusicSource.YOUTUBE) {
           let instance = this.activePipedInstance;
@@ -503,21 +544,7 @@ export class ClientSideService {
 
       // 3. Fallbacks
       if (song.source === MusicSource.NETEASE) return this.getNeteaseDetails(song, quality);
-      else if (song.source === MusicSource.PLUGIN && (song as any).pluginId) {
-          // Plugin Details Fetch
-          const plugin = this.plugins.find(p => p.id === (song as any).pluginId);
-          if (plugin && plugin.getMediaUrl) { 
-              try {
-                  const result = await plugin.getMediaUrl(song);
-                  // Support returning string or object
-                  const url = typeof result === 'string' ? result : result.url;
-                  const lyric = typeof result === 'object' ? result.lyric : undefined;
-                  return { url, lyric };
-              } catch(e) {
-                  this.log(`Plugin media error: ${e}`);
-              }
-          }
-      } else if (song.source === MusicSource.LOCAL && song.audioUrl) { return { url: song.audioUrl }; }
+      else if (song.source === MusicSource.LOCAL && song.audioUrl) { return { url: song.audioUrl }; }
       return { url: '' };
   }
 

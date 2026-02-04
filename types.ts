@@ -21,6 +21,7 @@ export interface Song {
   isGray?: boolean;
   fee?: number; // 0: free, 1: VIP, 8: SQ
   lyric?: string; // LRC format string
+  pluginId?: string; // Specifically for PLUGIN source
 }
 
 export interface Artist {
@@ -57,6 +58,8 @@ export interface MusicPlugin {
     sources: string[]; // e.g., ['kugou', 'bilibili']
     status: 'active' | 'disabled';
     srcUrl?: string; // Where it was loaded from
+    search?: (query: string, page?: number, type?: string) => Promise<any[]>;
+    getMediaUrl?: (song: any) => Promise<{url: string, lyric?: string}>;
 }
 
 export interface DiagnosticResult {
