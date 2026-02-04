@@ -1,290 +1,122 @@
 const express = require('express');
 const cors = require('cors');
-const cookieParser = require('cookie-parser');
-const os = require('os');
 const axios = require('axios');
-const { Innertube, UniversalCache } = require('youtubei.js');
-const { 
-  search: neteaseSearch, 
-  song_url, 
-  login_qr_key, 
-  login_qr_create, 
-  login_qr_check,
-  user_account
-} = require('NeteaseCloudMusicApi');
-
-// Optional: Global Agent for Proxy (if configured via Env)
-if (process.env.HTTP_PROXY) {
-  const { bootstrap } = require('global-agent');
-  process.env.GLOBAL_AGENT_HTTP_PROXY = process.env.HTTP_PROXY;
-  bootstrap();
-  console.log(`[Proxy] Enabled: ${process.env.HTTP_PROXY}`);
-}
+const { Innertube, UniversalCache } = require('youtubei.js'); // 核心库
+const { search, song_url } = require('NeteaseCloudMusicApi');
 
 const app = express();
 const PORT = 3001;
 
-// Allow CORS and Cookies
-app.use(cors({
-  origin: true, 
-  credentials: true
-}));
-app.use(express.json());
-app.use(cookieParser());
-
-// Initialize YouTube Client
+// 初始化 YouTube 伪装客户端
 let yt = null;
 (async () => {
     try {
         yt = await Innertube.create({
             cache: new UniversalCache(false),
-            generate_session_locally: true
+            generate_session_locally: true // 本地生成 session，无需远程验证
         });
-        console.log('[YouTube] Innertube initialized successfully.');
+        console.log('[System] YouTube Client Initialized (Android Mock)');
     } catch (e) {
-        console.error('[YouTube] Initialization failed:', e);
+        console.error('[System] YouTube Init Failed:', e);
     }
 })();
 
-function getLocalIP() {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address;
-      }
-    }
-  }
-  return 'localhost';
-}
+app.use(cors());
+app.use(express.json());
 
-// --- Mappers ---
-
-const mapNeteaseSong = (item) => ({
-  id: String(item.id),
-  title: item.name,
-  artist: item.ar ? item.ar.map(a => a.name).join('/') : 'Unknown',
-  album: item.al ? item.al.name : '',
-  coverUrl: item.al ? item.al.picUrl : '',
-  source: 'NETEASE',
-  duration: Math.floor(item.dt / 1000),
-  isGray: false 
-});
-
-const mapYoutubeSong = (item) => {
-    // youtubei.js returns structured objects
-    const title = item.title.text || item.title;
-    const author = item.author?.name || item.author?.text || 'Unknown';
-    const id = item.id;
-    const thumbnails = item.thumbnails || [];
-    const coverUrl = thumbnails.length > 0 ? thumbnails[0].url : '';
-    // Duration is usually a string "3:45" or seconds in some contexts
-    let duration = 0;
-    if (item.duration && item.duration.seconds) duration = item.duration.seconds;
-    
-    return {
-        id: id,
-        title: title,
-        artist: author,
-        album: 'YouTube',
-        coverUrl: coverUrl,
-        source: 'YOUTUBE',
-        duration: duration,
-        isGray: false
-    };
-};
-
-const mapBiliSong = (item) => {
-    // Helper to parse Bili duration "MM:SS" or "HH:MM:SS"
-    const parseDuration = (str) => {
-        if (!str) return 0;
-        const parts = str.split(':').map(Number);
-        if (parts.length === 2) return parts[0] * 60 + parts[1];
-        if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-        return 0;
-    };
-
-    return {
-        id: item.bvid,
-        title: item.title.replace(/<[^>]*>/g, ''),
-        artist: item.author,
-        album: 'Bilibili',
-        coverUrl: item.pic.startsWith('//') ? `https:${item.pic}` : item.pic,
-        source: 'BILIBILI',
-        duration: parseDuration(item.duration),
-        isGray: false
-    };
-};
-
-// --- API Endpoints ---
-
-// 1. Unified Search API
+// 1. 聚合搜索接口 (并行处理，失败不报错)
 app.get('/api/search', async (req, res) => {
-  const { q } = req.query;
-  const cookie = req.query.cookie || ''; 
-  
-  if (!q) return res.status(400).json({ error: 'Query is required' });
-
-  // Define tasks
-  const tasks = [];
-
-  // Netease Task
-  tasks.push(neteaseSearch({ keywords: q, type: 1, limit: 10, cookie })
-      .then(data => ({ source: 'NETEASE', data: data.body.result?.songs || [] }))
-      .catch(e => ({ source: 'NETEASE', error: e }))
-  );
-
-  // YouTube Task
-  if (yt) {
-      tasks.push(yt.search(q, { type: 'video' })
-          .then(data => ({ source: 'YOUTUBE', data: data.results || [] }))
-          .catch(e => ({ source: 'YOUTUBE', error: e }))
-      );
-  }
-
-  try {
-      const results = await Promise.all(tasks);
-      let songs = [];
-
-      results.forEach(r => {
-          if (r.source === 'NETEASE' && r.data) {
-              songs = [...songs, ...r.data.map(mapNeteaseSong)];
-          } else if (r.source === 'YOUTUBE' && r.data) {
-              songs = [...songs, ...r.data.filter(i => i.type === 'Video').slice(0, 5).map(mapYoutubeSong)];
-          }
-      });
-
-      res.json({ songs });
-  } catch (error) {
-    console.error('Search Error:', error);
-    res.status(500).json({ error: 'Search failed' });
-  }
-});
-
-// 2. Bilibili Proxy Search API
-app.get('/api/search/bilibili', async (req, res) => {
     const { q } = req.query;
-    if (!q) return res.status(400).json({ error: 'Query required' });
+    if (!q) return res.json({ songs: [] });
 
-    try {
-        const url = `https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${encodeURIComponent(q)}`;
-        const response = await axios.get(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://www.bilibili.com/',
-                'Cookie': "buvid3=infoc;" // Bypass basic anti-bot
-            }
-        });
+    const tasks = [];
 
-        if (response.data && response.data.data && response.data.data.result) {
-            const songs = response.data.data.result.map(mapBiliSong);
-            return res.json({ songs });
-        }
-        return res.json({ songs: [] });
-    } catch (e) {
-        console.error("Bili Search Error:", e.message);
-        return res.status(500).json({ error: 'Bilibili failed' });
+    // 网易云任务
+    tasks.push(search({ keywords: q, type: 1, limit: 10 })
+        .then(r => r.body.result?.songs?.map(s => ({
+            id: String(s.id),
+            title: s.name,
+            artist: s.ar?.map(a => a.name).join('/') || 'Unknown',
+            album: s.al?.name || '',
+            coverUrl: s.al?.picUrl || '',
+            source: 'NETEASE',
+            duration: Math.floor(s.dt / 1000)
+        })) || [])
+        .catch(() => [])
+    );
+
+    // YouTube 任务 (使用 youtubei.js)
+    if (yt) {
+        tasks.push(yt.search(q, { type: 'video' })
+            .then(r => r.videos.map(v => ({
+                id: v.id,
+                title: v.title.text || v.title,
+                artist: v.author?.name || 'Unknown',
+                album: 'YouTube',
+                coverUrl: v.thumbnails?.[0]?.url,
+                source: 'YOUTUBE',
+                duration: v.duration?.seconds || 0
+            })))
+            .catch(e => {
+                console.error("YT Search Error:", e.message);
+                return [];
+            })
+        );
     }
+
+    // Bilibili 任务 (后端代理)
+    tasks.push(axios.get('https://api.bilibili.com/x/web-interface/search/type', {
+        params: { keyword: q, search_type: 'video' },
+        headers: { 
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Referer': 'https://www.bilibili.com/',
+            'Cookie': 'buvid3=infoc;' 
+        }
+    }).then(r => (r.data?.data?.result || []).map(v => ({
+        id: v.bvid,
+        title: v.title.replace(/<[^>]+>/g, ''),
+        artist: v.author,
+        album: 'Bilibili',
+        coverUrl: v.pic.startsWith('//') ? `https:${v.pic}` : v.pic,
+        source: 'BILIBILI',
+        duration: 0 // B站时间处理较复杂，暂略
+    }))).catch(() => []));
+
+    // 等待所有结果合并
+    const results = await Promise.all(tasks);
+    const songs = results.flat();
+    res.json({ songs });
 });
 
-// 3. YouTube Play Redirect Endpoint
+// 2. 播放接口 (YouTube 直链重定向)
 app.get('/api/yt/play', async (req, res) => {
     const { id } = req.query;
-    if(!id) return res.status(400).send('ID required');
-    if(!yt) return res.status(503).send('YouTube client not ready');
-
+    if (!yt || !id) return res.status(400).send('Error');
     try {
-        // Use Android client emulation for better stability
-        const info = await yt.getBasicInfo(id, 'ANDROID');
+        const info = await yt.getBasicInfo(id, 'ANDROID'); // 伪装成安卓获取
+        const format = info.streaming_data.adaptive_formats
+            .filter(f => f.has_audio && !f.has_video)
+            .sort((a, b) => b.bitrate - a.bitrate)[0];
         
-        const streamingData = info.streaming_data;
-        if (!streamingData) return res.status(404).send('No streaming data');
-
-        // Prefer audio-only formats (m4a/webm)
-        const formats = [...(streamingData.adaptive_formats || []), ...(streamingData.formats || [])];
-        const audioFormats = formats.filter(f => f.mime_type.includes('audio'));
-        
-        // Sort by bitrate descending
-        audioFormats.sort((a, b) => b.bitrate - a.bitrate);
-
-        if (audioFormats.length > 0) {
-            // Redirect directly to Google's server
-            // Frontend will handle this 302
-            return res.redirect(audioFormats[0].url);
-        } else {
-            return res.status(404).send('No audio format found');
-        }
+        if (format?.url) res.redirect(format.url); // 直接重定向，不消耗服务器流量
+        else res.status(404).send('No URL');
     } catch (e) {
-        console.error("YouTube Play Error:", e.message);
         res.status(500).send(e.message);
     }
 });
 
-// 4. Get Playable URL (General resolver)
+// 3. 统一 URL 获取
 app.get('/api/url', async (req, res) => {
-  const { id, source, cookie } = req.query;
-  const host = req.get('host'); 
-  const protocol = req.protocol;
-
-  if (source === 'NETEASE') {
-      try {
-          let result = await song_url({ id: id, level: 'standard', cookie: cookie || '' });
-          let url = result.body?.data?.[0]?.url;
-          if (!url) {
-             result = await song_url({ id: id, level: 'exhigh', cookie: cookie || '' });
-             url = result.body?.data?.[0]?.url;
-          }
-          if (!url) return res.status(404).json({ error: 'Unavailable' });
-          return res.json({ url: url }); 
-      } catch (error) {
-          return res.status(500).json({ error: 'Netease Error' });
-      }
-  } else if (source === 'YOUTUBE') {
-      // Return the backend redirect endpoint
-      const streamUrl = `${protocol}://${host}/api/yt/play?id=${id}`;
-      return res.json({ url: streamUrl });
-  } else if (source === 'BILIBILI') {
-      // Just resolving metadata here if needed, or proxying if client can't direct play
-      // For now, return a proxy structure or direct URL if possible
-      try {
-        const viewRes = await axios.get(`https://api.bilibili.com/x/web-interface/view?bvid=${id}`);
-        const cid = viewRes.data?.data?.cid;
-        if (!cid) return res.status(404).json({ error: 'CID not found' });
-
-        const playUrl = `https://api.bilibili.com/x/player/playurl?bvid=${id}&cid=${cid}&qn=64&fnval=1&platform=html5&high_quality=1`;
-        const playRes = await axios.get(playUrl, { headers: { Referer: 'https://www.bilibili.com/' } });
-        const realUrl = playRes.data?.data?.durl?.[0]?.url;
-        
-        if (!realUrl) return res.status(404).json({ error: 'Play URL not found' });
-        
-        // Return real URL. Client CapacitorHttp can play it if Referer is set in plugin or if it's open.
-        // If 403, client might need a proxy. Let's return the URL for now.
-        return res.json({ url: realUrl });
-      } catch (e) {
-          console.error("Bilibili Error", e.message);
-          return res.status(500).json({ error: 'Failed' });
-      }
-  }
-
-  res.status(404).json({ error: 'Source not supported' });
+    const { id, source } = req.query;
+    if (source === 'NETEASE') {
+        const r = await song_url({ id, level: 'standard' });
+        res.json({ url: r.body.data[0].url });
+    } else if (source === 'YOUTUBE') {
+        // 让前端直接去请求上面的重定向接口
+        res.json({ url: `http://${req.headers.host}/api/yt/play?id=${id}` });
+    } else {
+        res.json({ url: '' }); // B站逻辑暂略
+    }
 });
 
-// Netease Login
-app.get('/api/login/qr/key', async (req, res) => {
-    try { const r = await login_qr_key({ timestamp: Date.now() }); res.json(r.body); } catch(e){res.status(500).send(e)}
-});
-app.get('/api/login/qr/create', async (req, res) => {
-    try { const r = await login_qr_create({ key: req.query.key, qrimg: true, timestamp: Date.now() }); res.json(r.body); } catch(e){res.status(500).send(e)}
-});
-app.get('/api/login/qr/check', async (req, res) => {
-    try { const r = await login_qr_check({ key: req.query.key, timestamp: Date.now() }); res.json({...r.body, cookie: r.cookie}); } catch(e){res.status(500).send(e)}
-});
-app.get('/api/login/status', async (req, res) => {
-    try { const r = await user_account({ cookie: req.query.cookie }); res.json(r.body); } catch(e){res.status(500).send(e)}
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-  const ip = getLocalIP();
-  console.log(`UniStream Backend: http://${ip}:${PORT}`);
-  console.log(`[YouTube] Client initializing...`);
-});
+app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
