@@ -1,0 +1,21 @@
+{
+  "short_name": "UniStream",
+  "name": "UniStream Music Player",
+  "icons": [
+    {
+      "src": "https://images.unsplash.com/photo-1614680376593-902f74cf0d41?w=192&h=192&fit=crop",
+      "sizes": "192x192",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "https://images.unsplash.com/photo-1614680376593-902f74cf0d41?w=512&h=512&fit=crop",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#0f0f13",
+  "background_color": "#0f0f13",
+  "orientation": "portrait"
+}
