@@ -1,7 +1,9 @@
+
 import React, { useState } from 'react';
 import { UserProfile } from '../types';
 import { NeteaseIcon, CookieIcon, CloseIcon } from './Icons';
 import { musicService } from '../services/geminiService';
+import { SecureImage } from './SecureImage';
 
 interface LoginModalProps {
   onLogin: (user: UserProfile) => void;
@@ -49,7 +51,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLogin, onClose }) => {
         <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-white"><CloseIcon size={24} /></button>
 
         <div className="flex flex-col items-center mb-6">
-          <div className="w-16 h-16 bg-netease rounded-full flex items-center justify-center mb-4 shadow-lg shadow-netease/30">
+          <div className="w-16 h-16 bg-netease rounded-full flex items-center justify-center mb-4 shadow-lg shadow-netease/30 overflow-hidden">
             <NeteaseIcon className="text-white w-10 h-10" />
           </div>
           <h2 className="text-xl font-bold">网易云音乐登录</h2>

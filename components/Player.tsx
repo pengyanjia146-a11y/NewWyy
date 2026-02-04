@@ -1,7 +1,9 @@
+
 import React, { useEffect, useState, useRef } from 'react';
 import { Song, MusicSource, AudioQuality } from '../types';
 import { PlayIcon, PauseIcon, SkipForwardIcon, SkipBackIcon, NeteaseIcon, YouTubeIcon, LyricsIcon, CloseIcon, DownloadIcon, HeartIcon, VolumeIcon, VolumeMuteIcon, ChevronDownIcon, ListIcon, VideoIcon } from './Icons';
 import { musicService } from '../services/geminiService';
+import { SecureImage } from './SecureImage';
 
 // Helper for Lyrics
 const parseLyrics = (lrc: string) => {
@@ -261,7 +263,7 @@ export const Player: React.FC<PlayerProps> = ({ currentSong, isPlaying, onPlayPa
       <div className={`fixed inset-0 z-[60] bg-gray-900 flex flex-col transition-all duration-500 ease-in-out ${isFullScreen ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0 pointer-events-none'}`}>
           {/* Background Blur */}
           <div className="absolute inset-0 z-0 opacity-40">
-              <img src={currentSong.coverUrl} className="w-full h-full object-cover blur-3xl" />
+              <SecureImage src={currentSong.coverUrl} className="w-full h-full object-cover blur-3xl" />
               <div className="absolute inset-0 bg-black/50" />
           </div>
 
@@ -311,7 +313,7 @@ export const Player: React.FC<PlayerProps> = ({ currentSong, isPlaying, onPlayPa
                   ) : (
                       <div className="relative w-full max-w-sm aspect-square mb-8">
                           <div className={`w-full h-full rounded-full overflow-hidden border-4 border-white/10 shadow-2xl ${isPlaying ? 'animate-spin-slow' : ''}`}>
-                              <img src={currentSong.coverUrl} className="w-full h-full object-cover" />
+                              <SecureImage src={currentSong.coverUrl} className="w-full h-full object-cover" />
                           </div>
                           <div className="absolute inset-0 flex items-center justify-center">
                               <div className="w-1/3 h-1/3 bg-gray-900 rounded-full border border-gray-800 shadow-inner flex items-center justify-center">
@@ -397,7 +399,7 @@ export const Player: React.FC<PlayerProps> = ({ currentSong, isPlaying, onPlayPa
         
         <div className="flex items-center gap-3 overflow-hidden flex-1 cursor-pointer">
             <div className={`w-10 h-10 md:w-12 md:h-12 rounded-lg bg-gray-800 overflow-hidden flex-shrink-0 relative ${isPlaying ? 'animate-spin-slow-paused' : ''}`}>
-                <img src={currentSong.coverUrl} className="w-full h-full object-cover" />
+                <SecureImage src={currentSong.coverUrl} className="w-full h-full object-cover" />
             </div>
             <div className="min-w-0">
                 <h4 className="font-bold text-sm truncate text-white">{currentSong.title}</h4>

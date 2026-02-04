@@ -6,6 +6,7 @@ import { LoginModal } from './components/LoginModal';
 import { Toast, ToastType } from './components/Toast';
 import { HomeIcon, SearchIcon, LibraryIcon, NeteaseIcon, YouTubeIcon, BilibiliIcon, PlayIcon, LabIcon, PlaylistAddIcon, PluginFileIcon, MoreVerticalIcon, HeartIcon, DownloadIcon, NextPlanIcon, SettingsIcon, FolderIcon, ActivityIcon, TrashIcon, UserCheckIcon, UserPlusIcon, SmartphoneIcon } from './components/Icons';
 import { Song, UserProfile, ViewState, MusicSource, Playlist, MusicPlugin, AudioQuality, Artist, DiagnosticResult } from './types';
+import { SecureImage } from './components/SecureImage';
 
 export default function App() {
   const [view, setView] = useState<ViewState>('HOME');
@@ -451,7 +452,7 @@ export default function App() {
                   {playHistory.map((song, i) => (
                       <div key={i} className="flex-shrink-0 w-24 cursor-pointer group" onClick={() => playSong(song)}>
                           <div className="relative aspect-square rounded-lg overflow-hidden mb-2">
-                              <img src={song.coverUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
+                              <SecureImage src={song.coverUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
                           </div>
                           <p className="text-xs truncate text-gray-300">{song.title}</p>
                       </div>
@@ -487,7 +488,7 @@ export default function App() {
                 
                 <div onClick={() => !user ? setShowLogin(true) : null} className="bg-white/5 p-4 rounded-xl flex items-center gap-4 mb-6 cursor-pointer hover:bg-white/10 transition-colors">
                     <div className="w-16 h-16 rounded-full bg-gray-700 overflow-hidden">
-                        {user?.avatarUrl ? <img src={user.avatarUrl} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-gray-400">?</div>}
+                        {user?.avatarUrl ? <SecureImage src={user.avatarUrl} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-gray-400">?</div>}
                     </div>
                     <div>
                         <div className="font-bold text-lg">{user ? user.nickname : '点击登录网易云'}</div>
@@ -504,7 +505,7 @@ export default function App() {
                         <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
                              {followedArtists.map(artist => (
                                  <div key={artist.id} className="flex-shrink-0 w-20 text-center cursor-pointer" onClick={() => handleArtistClick(artist.id)}>
-                                     <img src={artist.coverUrl} className="w-20 h-20 rounded-full object-cover mb-2 border-2 border-transparent hover:border-primary transition-colors" />
+                                     <SecureImage src={artist.coverUrl} className="w-20 h-20 rounded-full object-cover mb-2 border-2 border-transparent hover:border-primary transition-colors" />
                                      <p className="text-xs truncate">{artist.name}</p>
                                  </div>
                              ))}
@@ -517,7 +518,7 @@ export default function App() {
                     {playlists.map(pl => (
                         <div key={pl.id} onClick={() => setActivePlaylist(pl)} className="group cursor-pointer">
                             <div className="relative aspect-square rounded-xl overflow-hidden mb-2 bg-gray-800 border border-white/5">
-                                {pl.coverUrl && <img src={pl.coverUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />}
+                                {pl.coverUrl && <SecureImage src={pl.coverUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />}
                                 <div className="absolute inset-0 bg-black/20 group-hover:bg-black/0 transition-colors" />
                                 {pl.id === 'fav' && <div className="absolute top-2 right-2 bg-netease/80 p-1.5 rounded-full"><HeartIcon size={12} fill="white" /></div>}
                             </div>
@@ -534,7 +535,7 @@ export default function App() {
                             {neteasePlaylists.map(pl => (
                                 <div key={pl.id} onClick={() => handleNeteasePlaylistClick(pl)} className="group cursor-pointer">
                                     <div className="relative aspect-square rounded-xl overflow-hidden mb-2 bg-gray-800 border border-white/5">
-                                        <img src={pl.coverUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                                        <SecureImage src={pl.coverUrl!} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                                         <div className="absolute inset-0 bg-black/20 group-hover:bg-black/0 transition-colors" />
                                     </div>
                                     <h3 className="font-bold truncate">{pl.name}</h3>
@@ -549,7 +550,7 @@ export default function App() {
               <div>
                   <button onClick={() => setActivePlaylist(null)} className="text-sm text-gray-400 hover:text-white mb-4 flex items-center gap-1">← 返回</button>
                   <div className="flex items-center gap-6 mb-8">
-                      <img src={activePlaylist.coverUrl} className="w-32 h-32 rounded-xl shadow-lg" />
+                      <SecureImage src={activePlaylist.coverUrl!} className="w-32 h-32 rounded-xl shadow-lg" />
                       <div>
                           <h2 className="text-2xl font-bold mb-2">{activePlaylist.name}</h2>
                           <button onClick={() => { if(activePlaylist.songs.length) playSong(activePlaylist.songs[0], activePlaylist.songs) }} className="bg-primary hover:bg-indigo-600 text-white px-6 py-2 rounded-full flex items-center gap-2">
@@ -586,7 +587,7 @@ export default function App() {
           <div className="pb-24 animate-fade-in">
                <button onClick={() => setView('LIBRARY')} className="text-sm text-gray-400 hover:text-white mb-4 flex items-center gap-1">← 返回我的音乐</button>
                <div className="flex flex-col md:flex-row items-center gap-6 mb-8">
-                   <img src={activeArtist.info.coverUrl} className="w-40 h-40 rounded-full object-cover shadow-2xl border-4 border-white/10" />
+                   <SecureImage src={activeArtist.info.coverUrl} className="w-40 h-40 rounded-full object-cover shadow-2xl border-4 border-white/10" />
                    <div className="text-center md:text-left">
                        <h2 className="text-3xl font-bold mb-2">{activeArtist.info.name}</h2>
                        <p className="text-gray-400 text-sm mb-4 line-clamp-3 max-w-lg">{activeArtist.info.description || '暂无简介'}</p>
@@ -683,14 +684,14 @@ export default function App() {
                </div>
            )}
            
-           {/* Results List - Render as long as we have results, regardless of loading state */}
+           {/* Results List */}
            {searchResults.length > 0 && (
                <div className="space-y-2">
                    {filteredResults.map(song => <SongItem key={song.id} {...songItemProps(song)} />)}
                </div>
            )}
            
-           {/* Loading Spinner - Shown at bottom when searching */}
+           {/* Loading Spinner */}
            {searchLoading && (
                <div className="flex justify-center py-6 animate-fade-in">
                    <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-full">
@@ -706,8 +707,9 @@ export default function App() {
       </div>
       );
   };
-
-  // ... (Remainder of render functions - Labs, Settings etc. - kept identical)
+  
+  // ... (Remainder kept same)
+  // ...
   const renderLabs = () => (
     <div className="pb-24 animate-fade-in">
          <h2 className="text-2xl font-bold mb-6 flex items-center gap-2"><LabIcon /> 实验室</h2>
@@ -793,7 +795,7 @@ export default function App() {
                  <h3 className="font-bold mb-4 border-b border-white/10 pb-2">关于</h3>
                  <div className="text-sm text-gray-400 space-y-2">
                      <p className="flex items-center gap-2"><SmartphoneIcon size={16}/> UniStream Music Player v2.5</p>
-                     <p>Core Upgrade: youtubei.js + Native Backend Proxy</p>
+                     <p>Core Upgrade: youtubei.js + Native Backend Proxy + Native SecureImage</p>
                  </div>
              </div>
          </div>
@@ -871,7 +873,7 @@ export default function App() {
   );
 }
 
-// ... (Subcomponents identical)
+// ... (Subcomponents)
 const NavBtn = ({ icon, label, active, onClick }: any) => (
   <button onClick={onClick} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all ${active ? 'bg-white/10 text-white font-medium' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}>
     {React.cloneElement(icon, { size: 20 })}
@@ -902,7 +904,7 @@ interface SongItemProps {
 const SongItem: React.FC<SongItemProps> = ({ song, onClick, isCurrent, onOpenMenu, onArtistClick }) => (
   <div onClick={onClick} className={`group flex items-center p-3 rounded-xl cursor-pointer transition-colors ${isCurrent ? 'bg-white/10' : 'hover:bg-white/5'}`}>
     <div className="relative w-12 h-12 rounded-lg overflow-hidden mr-4 flex-shrink-0">
-      <img src={song.coverUrl} alt={song.title} className={`w-full h-full object-cover ${song.isGray ? 'grayscale opacity-50' : ''}`} />
+      <SecureImage src={song.coverUrl} alt={song.title} className={`w-full h-full object-cover ${song.isGray ? 'grayscale opacity-50' : ''}`} />
       <div className={`absolute inset-0 bg-black/40 flex items-center justify-center ${isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
           {isCurrent ? <div className="w-3 h-3 bg-white rounded-full animate-pulse"/> : <PlayIcon size={16} className="text-white"/>}
       </div>
@@ -942,7 +944,7 @@ const SongItemMenu = ({ song, isLiked, onToggleLike, onDownload, onPlayNext, isO
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setOpen(false)}></div>
             <div className="bg-dark-light w-full md:w-80 rounded-t-2xl md:rounded-2xl border border-white/10 shadow-2xl z-10 p-4 pb-safe animate-slide-up transform transition-transform">
                 <div className="flex items-center gap-3 mb-4 pb-4 border-b border-white/5">
-                    <img src={song.coverUrl} className="w-12 h-12 rounded-lg bg-gray-800 object-cover" />
+                    <SecureImage src={song.coverUrl} className="w-12 h-12 rounded-lg bg-gray-800 object-cover" />
                     <div className="flex-1 min-w-0">
                         <h4 className="font-bold truncate text-sm">{song.title}</h4>
                         <p className="text-xs text-gray-400 truncate">{song.artist}</p>

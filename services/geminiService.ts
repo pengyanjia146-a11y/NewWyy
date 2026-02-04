@@ -224,26 +224,65 @@ export class ClientSideService {
       return [];
   }
 
-  // --- Other Methods (Reduced for brevity, identical logic) ---
-  
+  // --- Audio Proxy ---
+  // Uses CapacitorHttp to fetch audio as blob and return a local Blob URL
+  // This bypasses 403 Forbidden on audio files that check Referer
+  private async getProxiedAudioUrl(url: string, referer: string): Promise<string> {
+      try {
+          const res = await CapacitorHttp.get({
+              url: url,
+              responseType: 'blob',
+              headers: { 
+                  'Referer': referer,
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+              }
+          });
+          if (res.data) {
+             const base64 = res.data;
+             const mime = res.headers['content-type'] || 'audio/mp4';
+             // Convert base64 to Blob
+             const binary = atob(base64);
+             const array = new Uint8Array(binary.length);
+             for(let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+             const blob = new Blob([array], { type: mime });
+             return URL.createObjectURL(blob);
+          }
+      } catch (e) {
+          this.log(`Audio Proxy Failed: ${e}`);
+      }
+      return url; 
+  }
+
   async getSongDetails(song: Song, quality: AudioQuality = 'standard'): Promise<SongPlayDetails> {
       // 1. YouTube: Redirect via Backend
       if (this.apiBaseUrl && song.source === MusicSource.YOUTUBE) {
           return { url: `${this.apiBaseUrl}/api/yt/play?id=${song.id}` };
       }
       
-      // 2. Bilibili: Try Backend resolver
-      if (this.apiBaseUrl && song.source === MusicSource.BILIBILI) {
-          try {
-              const url = `${this.apiBaseUrl}/url?id=${song.id}&source=${song.source}`;
-              const res = await CapacitorHttp.get({ url, connectTimeout: 5000 });
-              if (res.status === 200 && res.data?.url) return { url: res.data.url };
-          } catch(e) {}
+      // 2. Bilibili: Try Backend/Proxy
+      if (song.source === MusicSource.BILIBILI) {
+          let url = '';
+          if (this.apiBaseUrl) {
+              try {
+                  const res = await CapacitorHttp.get({ url: `${this.apiBaseUrl}/url?id=${song.id}&source=BILIBILI`, connectTimeout: 5000 });
+                  if (res.status === 200 && res.data?.url) url = res.data.url;
+              } catch(e) {}
+          }
+          
+          if (!url) {
+              url = await this.getBilibiliUrl(song.id);
+          }
+
+          // Force Proxy if we have a URL, to pass Referer check
+          if (url) {
+              const proxied = await this.getProxiedAudioUrl(url, 'https://www.bilibili.com/');
+              return { url: proxied };
+          }
+          return { url: '' };
       }
 
       // 3. Fallbacks / Netease
       if (song.source === MusicSource.NETEASE) return this.getNeteaseDetails(song, quality);
-      else if (song.source === MusicSource.BILIBILI) { const url = await this.getBilibiliUrl(song.id); return { url }; }
       else if (song.source === MusicSource.PLUGIN && (song as any).pluginId) {
           const plugin = this.plugins.find(p => p.id === (song as any).pluginId);
           if (plugin && plugin.getMediaUrl) { const url = await plugin.getMediaUrl(song); return { url }; }
@@ -301,9 +340,8 @@ export class ClientSideService {
   }
 
   // --- Helpers (Reduced) ---
-  async runDiagnostics(): Promise<DiagnosticResult[]> { return []; } // Simplified for this request
+  async runDiagnostics(): Promise<DiagnosticResult[]> { return []; } 
   async getUserPlaylists(userId: string): Promise<Playlist[]> { 
-      // ... Same as before
       try {
           const url = `https://music.163.com/api/user/playlist?uid=${userId}&limit=100`;
           const response = await CapacitorHttp.get({ url, headers: this.getHeaders() });
@@ -321,7 +359,6 @@ export class ClientSideService {
   }
   async getArtistDetail(artistId: string): Promise<{artist: Artist, songs: Song[]}> { return { artist: {id: artistId, name: 'Unknown', coverUrl: ''}, songs: [] }; }
   async importNeteasePlaylist(playlistId: string): Promise<Song[]> { 
-      // ... Same as before
       try {
           const url = `https://music.163.com/api/v3/playlist/detail`;
           const response = await CapacitorHttp.post({ url, headers: this.getHeaders(), data: `id=${playlistId}&n=1000` });
@@ -334,7 +371,24 @@ export class ClientSideService {
       return [];
   }
   async getDailyRecommendSongs(): Promise<Song[]> { return []; }
-  async getUserStatus(cookieInput: string): Promise<any> { return { code: 500 }; }
+  async getUserStatus(cookieInput: string): Promise<any> { 
+      try {
+          let finalCookie = cookieInput.trim();
+          const musicUMatch = cookieInput.match(/MUSIC_U=([0-9a-zA-Z]+)/);
+          if (musicUMatch) finalCookie = musicUMatch[1]; 
+          else if (cookieInput.length > 50 && !cookieInput.includes('=')) finalCookie = cookieInput;
+          const testHeader = `os=pc; appver=2.9.7; MUSIC_U=${finalCookie};`;
+          const response = await CapacitorHttp.post({
+              url: 'https://music.163.com/api/w/nuser/account/get',
+              headers: { ...this.baseHeaders, 'Cookie': testHeader },
+              connectTimeout: 8000
+          });
+          let resData = response.data;
+          if (typeof resData === 'string') { try { resData = JSON.parse(resData); } catch(e) {} }
+          if (resData && resData.code === 200) { resData._cleanedCookie = finalCookie; }
+          return resData;
+      } catch(e) { return { code: 500 }; }
+  }
   async installPluginFromUrl(url: string): Promise<boolean> { return false; }
   async importPlugin(code: string): Promise<boolean> { return false; }
   getPlugins() { return this.plugins; }
