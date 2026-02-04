@@ -380,7 +380,8 @@ export default function App() {
   const handleLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => { /* ... */ };
   const createPlaylist = () => { /* ... */ };
   const handleImportPluginFileClick = () => { fileInputRef.current?.click(); };
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+ // App.tsx 中的 handleFileChange 函数
+const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -388,17 +389,19 @@ export default function App() {
     reader.onload = async (event) => {
         const code = event.target?.result as string;
         if (code) {
-            // 调用重构后的 musicService
+            // 调用重构后的 service
             const success = await musicService.importPlugin(code);
             if (success) {
-                // 更新 UI 状态
+                // 更新已安装插件列表的状态
                 setInstalledPlugins([...musicService.getPlugins()]);
-                showToast("音源插件加载成功", "success");
+                showToast('插件导入成功', 'success');
             } else {
-                showToast("插件协议校验不通过", "error");
+                showToast('插件格式错误或解析失败', 'error');
             }
         }
     };
+    reader.readAsText(file);
+};
     reader.onerror = () => showToast("读取文件失败", "error");
     reader.readAsText(file);
 };
