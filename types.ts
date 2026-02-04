@@ -9,30 +9,16 @@ export enum MusicSource {
 
 // --- MusicFree Compatible Interfaces ---
 
-export interface IArtist {
-    id: string;
-    name: string;
-    avatar?: string;
-    [key: string]: any;
-}
-
-export interface IAlbum {
-    id: string;
-    name: string;
-    img?: string;
-    [key: string]: any;
-}
-
 export interface IMusicItem {
-    id: string; // Plugin specific ID
-    platform: string; // Plugin platform code (e.g. 'qy', 'kw')
+    id: string | number;     // Plugin unique ID
+    platform?: string;       // Platform code
     title: string;
     artist: string;
-    artists?: IArtist[];
-    album?: string;
-    artwork?: string; // URL
-    duration?: number; // seconds
-    [key: string]: any; // Allow extra props
+    album: string;
+    artwork: string;         // Cover URL
+    url?: string;            // Direct URL (optional)
+    duration?: number;       // Seconds
+    [key: string]: any;      // Extra props
 }
 
 export interface IMediaSource {
@@ -43,20 +29,19 @@ export interface IMediaSource {
 }
 
 export interface IPlugin {
-    platform: string;
+    platform: string;        // Unique ID (e.g., 'qq', 'kw', 'bilibili')
     name: string;
     version: string;
+    appVersion?: string;     // Supported app version
     author?: string;
-    description?: string;
-    userVariables?: any[];
-    srcUrl?: string; // Where it was loaded from
+    srcUrl?: string;         // Origin URL
     
-    // Core Methods
-    search: (query: string, page: number, type: string) => Promise<{
-        isEnd?: boolean;
-        data: IMusicItem[];
-    }>;
-    getMediaSource: (musicItem: IMusicItem, quality: string) => Promise<IMediaSource | null>;
+    // Core Methods (MusicFree Protocol)
+    // Returns array directly OR { data: [], isEnd: boolean }
+    search: (query: string, page: number, type: string) => Promise<IMusicItem[] | { data: IMusicItem[], isEnd: boolean }>;
+    
+    getMediaSource: (musicItem: IMusicItem, quality: string) => Promise<{ url: string; headers?: Record<string, string>; lyric?: string } | null>;
+    
     getMusicInfo?: (musicItem: IMusicItem) => Promise<Partial<IMusicItem>>;
     getLyric?: (musicItem: IMusicItem) => Promise<{ lyric: string; tlyric?: string }>;
 }
@@ -110,11 +95,8 @@ export interface UserProfile {
 }
 
 export interface MusicPlugin extends IPlugin {
-    // Wrapper to match previous app logic if needed, 
-    // but we primarily use IPlugin structure now.
-    id: string;
+    id: string; // Alias for platform
     status: 'active' | 'disabled';
-    sources?: string[];
 }
 
 export interface DiagnosticResult {

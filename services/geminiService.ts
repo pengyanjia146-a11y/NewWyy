@@ -1,8 +1,8 @@
 
-import { CapacitorHttp, HttpResponse } from '@capacitor/core';
-import { Song, MusicSource, AudioQuality, Artist, Playlist, DiagnosticResult, MusicPlugin, IPlugin, IMusicItem, IMediaSource } from "../types";
+import { CapacitorHttp } from '@capacitor/core';
+import { Song, MusicSource, AudioQuality, Artist, Playlist, DiagnosticResult, MusicPlugin, IPlugin, IMusicItem } from "../types";
 
-// --- MusicFree Dependencies ---
+// --- MusicFree Plugin Dependencies ---
 import * as cheerio from 'cheerio';
 import CryptoJS from 'crypto-js';
 import qs from 'qs';
@@ -51,7 +51,6 @@ export class ClientSideService {
   
   constructor() {
     this.generateGuestHeaders();
-    this.loadBuiltInPlugins(); // Load YouTube/Bilibili as plugins
   }
 
   // --- Logger ---
@@ -65,13 +64,9 @@ export class ClientSideService {
   public getLogs() { return this.logs; }
   public clearLogs() { this.logs = []; }
 
-  // --- Config ---
-  setApiBaseUrl(url: string) { /* Used by plugins if needed */ }
-  setSearchTimeout(ms: number) { /* unused in new arch */ }
-  setCustomInvidiousUrl(url: string) { 
-      // Find YouTube plugin and update its config if possible
-      // For this implementation, we'll keep it simple
-  }
+  setApiBaseUrl(url: string) { }
+  setSearchTimeout(ms: number) { }
+  setCustomInvidiousUrl(url: string) { }
 
   // --- Private Helpers ---
   private generateGuestHeaders() {
@@ -95,17 +90,25 @@ export class ClientSideService {
       return { ...this.neteaseHeaders, 'Cookie': cookieStr };
   }
 
-  // --- Sandbox & Mock Axios (The Bridge) ---
+  // --- Mock Axios (The Bridge) ---
+  // Intercepts plugin requests and routes them through CapacitorHttp to bypass CORS
   private createMockAxios() {
-      const bridgeRequest = async (method: 'GET' | 'POST', url: string, data?: any, config: any = {}) => {
-          // Normalize headers
-          const headers = config.headers || {};
+      const request = async (config: any) => {
+          const method = (config.method || 'GET').toUpperCase();
+          const url = config.url;
+          let headers = config.headers || {};
           
-          // Handle params serializing
+          // Handle params
           let finalUrl = url;
           if (config.params) {
               const query = qs.stringify(config.params);
               finalUrl += (finalUrl.includes('?') ? '&' : '?') + query;
+          }
+
+          // Handle data (body)
+          let data = config.data;
+          if (data && typeof data === 'object' && headers['Content-Type']?.includes('x-www-form-urlencoded')) {
+             data = qs.stringify(data);
           }
 
           this.log(`[Plugin Req] ${method} ${finalUrl.substring(0, 50)}...`);
@@ -117,31 +120,35 @@ export class ClientSideService {
                   headers: headers,
                   data: data,
                   connectTimeout: 15000,
-                  readTimeout: 15000
               });
 
-              // MusicFree plugins expect axios response structure
+              // Process Response Data
+              let responseData = response.data;
+              const contentType = response.headers['Content-Type'] || response.headers['content-type'] || '';
+              
+              if (typeof responseData === 'string' && (contentType.includes('json') || responseData.trim().startsWith('{') || responseData.trim().startsWith('['))) {
+                  try { responseData = JSON.parse(responseData); } catch(e) {}
+              }
+
               return {
-                  data: (typeof response.data === 'string' && (response.headers['Content-Type']?.includes('json') || response.headers['content-type']?.includes('json'))) 
-                        ? JSON.parse(response.data) 
-                        : response.data,
+                  data: responseData,
                   status: response.status,
                   statusText: 'OK',
                   headers: response.headers,
-                  config: config,
-                  request: {}
+                  config: config
               };
           } catch (e: any) {
               this.log(`[Plugin Err] ${e.message}`);
-              throw e; // Let plugin handle error
+              throw e;
           }
       };
 
       return {
-          get: (url: string, config?: any) => bridgeRequest('GET', url, undefined, config),
-          post: (url: string, data?: any, config?: any) => bridgeRequest('POST', url, data, config),
+          get: (url: string, config: any = {}) => request({ ...config, method: 'GET', url }),
+          post: (url: string, data: any, config: any = {}) => request({ ...config, method: 'POST', url, data }),
+          request: request,
           defaults: { headers: { common: {} } },
-          create: () => this.createMockAxios() // Recursive for axios.create()
+          create: () => this.createMockAxios() 
       };
   }
 
@@ -153,10 +160,10 @@ export class ClientSideService {
           const mockAxios = this.createMockAxios();
           const module = { exports: {} as any };
           
-          // Dependency Injection
+          // Environment Injection (MusicFree Standard)
           const env = {
               axios: mockAxios,
-              http: mockAxios, // Some plugins use 'http'
+              http: mockAxios, // Alias
               cheerio: cheerio,
               qs: qs,
               CryptoJS: CryptoJS,
@@ -164,9 +171,8 @@ export class ClientSideService {
               he: he,
               module: module,
               exports: module.exports,
-              console: console, // Allow plugins to log
+              console: console, 
               require: (name: string) => {
-                  // Basic require simulation for common libs
                   if (name === 'axios') return mockAxios;
                   if (name === 'cheerio') return cheerio;
                   if (name === 'qs') return qs;
@@ -177,7 +183,7 @@ export class ClientSideService {
               }
           };
 
-          // Create Sandbox Function
+          // Wrap code in a function to isolate scope
           const runPlugin = new Function(
               'axios', 'http', 'cheerio', 'qs', 'CryptoJS', 'bigInt', 'he', 'module', 'exports', 'require', 'console',
               code
@@ -193,17 +199,16 @@ export class ClientSideService {
           
           // Validation
           if (!plugin.platform || !plugin.search) {
-              throw new Error("Invalid plugin structure: missing platform or search");
+              throw new Error("Invalid plugin: missing platform or search method");
           }
 
-          // Wrap as MusicPlugin
           const musicPlugin: MusicPlugin = {
               ...plugin,
               status: 'active',
-              id: plugin.platform // Map platform to id for internal use
+              id: plugin.platform
           };
 
-          // Remove old version if exists
+          // Overwrite existing plugin with same platform
           this.plugins = this.plugins.filter(p => p.platform !== musicPlugin.platform);
           this.plugins.push(musicPlugin);
           
@@ -217,127 +222,48 @@ export class ClientSideService {
       }
   }
 
-  getPlugins() { return this.plugins; }
-
-  // --- Built-in Plugins (Defined as JS Objects) ---
-  private loadBuiltInPlugins() {
-      // 1. YouTube Plugin (Internal Wrapper around Piped)
-      const youtubePlugin: MusicPlugin = {
-          platform: 'youtube',
-          id: 'youtube',
-          name: 'YouTube (Built-in)',
-          version: '1.0.0',
-          author: 'UniStream',
-          status: 'active',
-          sources: ['youtube'],
-          search: async (query, page, type) => {
-              const instances = [
-                  "https://pipedapi.kavin.rocks",
-                  "https://api.piped.video",
-                  "https://pipedapi.drg.li"
-              ];
-              
-              // Robust fetch logic inside the plugin
-              for (const host of instances) {
-                  try {
-                      // Try music_videos first, then videos
-                      let items = [];
-                      try {
-                        const res = await CapacitorHttp.get({ url: `${host}/search?q=${encodeURIComponent(query)}&filter=music_videos` });
-                        if(res.status === 200) items = JSON.parse(res.data).items || [];
-                      } catch(e) {}
-
-                      if(items.length === 0) {
-                        const res = await CapacitorHttp.get({ url: `${host}/search?q=${encodeURIComponent(query)}&filter=videos` });
-                        if(res.status === 200) items = JSON.parse(res.data).items || [];
-                      }
-
-                      if (items.length > 0) {
-                          const results: IMusicItem[] = items.map((item: any) => ({
-                              id: item.url ? item.url.split('/watch?v=')[1] : item.id,
-                              platform: 'youtube',
-                              title: item.title,
-                              artist: item.uploaderName || 'Unknown',
-                              artwork: item.thumbnail || item.thumbnails?.[0]?.url,
-                              duration: item.duration,
-                              host: host // store successful host for playback
-                          })).filter((i: any) => i.id);
-                          
-                          return { data: results, isEnd: false };
-                      }
-                  } catch (e) {}
-              }
-              return { data: [], isEnd: true };
-          },
-          getMediaSource: async (item, quality) => {
-              const host = item.host || "https://pipedapi.kavin.rocks";
-              const url = `${host}/streams/${item.id}`;
-              const res = await CapacitorHttp.get({ url });
-              const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
-              const audio = data.audioStreams?.find((s: any) => !s.videoOnly && s.mimeType?.includes('mp4')) 
-                         || data.audioStreams?.[0];
-              
-              return audio ? { url: audio.url } : null;
+  // --- Install Plugin from URL ---
+  async installPluginFromUrl(url: string): Promise<boolean> {
+      try {
+          this.log(`Downloading plugin from: ${url}`);
+          const res = await CapacitorHttp.get({ url });
+          if (res.status === 200 && typeof res.data === 'string') {
+              return await this.importPlugin(res.data);
           }
-      };
-
-      // 2. Bilibili Plugin
-      const bilibiliPlugin: MusicPlugin = {
-          platform: 'bilibili',
-          id: 'bilibili',
-          name: 'Bilibili (Built-in)',
-          version: '1.0.0',
-          author: 'UniStream',
-          status: 'active',
-          sources: ['bilibili'],
-          search: async (query, page, type) => {
-              const url = `https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${encodeURIComponent(query)}`;
-              const res = await CapacitorHttp.get({ url, headers: { 'User-Agent': 'Mozilla/5.0' } });
-              const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
-              
-              if (data.data?.result) {
-                  const results: IMusicItem[] = data.data.result.map((item: any) => ({
-                      id: item.bvid,
-                      platform: 'bilibili',
-                      title: item.title.replace(/<[^>]*>/g, ''),
-                      artist: item.author,
-                      artwork: item.pic.startsWith('//') ? `https:${item.pic}` : item.pic,
-                      duration: 0, // Simplified parsing
-                      cid: item.cid // Optional, might need fetching later
-                  }));
-                  return { data: results, isEnd: false };
-              }
-              return { data: [], isEnd: true };
-          },
-          getMediaSource: async (item, quality) => {
-              // Bilibili usually requires complex CID fetching + signing or proxy
-              // Returning null here to fallback to legacy handling or implement simpler direct URL if available
-              // For robustness, this usually needs a backend proxy or complex frontend logic.
-              return null; 
-          }
-      };
-
-      this.plugins.push(youtubePlugin);
-      this.plugins.push(bilibiliPlugin);
+          throw new Error(`Failed to download: Status ${res.status}`);
+      } catch (e: any) {
+          this.log(`Install Error: ${e.message}`);
+          return false;
+      }
   }
+
+  getPlugins() { return this.plugins; }
 
   // --- Core: Search Music (Unified) ---
   async searchMusic(query: string, onProgress: (songs: Song[]) => void): Promise<void> {
     this.log(`Search: "${query}"`);
     
-    // 1. Netease (Internal Source)
+    // 1. Netease (Internal Fallback)
     this.searchNetease(query).then(songs => {
         if(songs.length > 0) onProgress(songs);
     }).catch(e => this.log(`Netease Error: ${e}`));
 
-    // 2. Plugins (Iterate all loaded plugins)
+    // 2. Plugins (Dynamic)
     this.plugins.forEach(async (plugin) => {
         try {
             this.log(`Plugin [${plugin.name}] searching...`);
             const result = await plugin.search(query, 1, 'music');
             
-            if (result.data && result.data.length > 0) {
-                const songs: Song[] = result.data.map(item => this.mapPluginItemToSong(item, plugin));
+            // Normalize result: support both Array and {data: Array}
+            let items: IMusicItem[] = [];
+            if (Array.isArray(result)) {
+                items = result;
+            } else if (result && Array.isArray((result as any).data)) {
+                items = (result as any).data;
+            }
+
+            if (items.length > 0) {
+                const songs: Song[] = items.map(item => this.mapPluginItemToSong(item, plugin));
                 this.log(`Plugin [${plugin.name}] found ${songs.length}`);
                 onProgress(songs);
             } else {
@@ -349,12 +275,12 @@ export class ClientSideService {
     });
   }
 
-  // --- Mapper ---
   private mapPluginItemToSong(item: IMusicItem, plugin: MusicPlugin): Song {
-      // Determine source type for Icon display
+      // Basic Source Mapping for UI Icons
       let source = MusicSource.PLUGIN;
-      if (plugin.platform === 'youtube') source = MusicSource.YOUTUBE;
-      if (plugin.platform === 'bilibili') source = MusicSource.BILIBILI;
+      const pid = plugin.platform.toLowerCase();
+      if (pid.includes('youtube') || pid.includes('yt')) source = MusicSource.YOUTUBE;
+      if (pid.includes('bilibili') || pid.includes('bili')) source = MusicSource.BILIBILI;
 
       return {
           id: String(item.id),
@@ -364,8 +290,8 @@ export class ClientSideService {
           coverUrl: item.artwork || '',
           source: source,
           duration: item.duration || 0,
-          pluginId: plugin.platform, // Critical for playback routing
-          pluginData: item, // Save full data for getMediaSource
+          pluginId: plugin.platform,
+          pluginData: item, 
           isGray: false
       };
   }
@@ -377,12 +303,16 @@ export class ClientSideService {
           return this.getNeteaseDetails(song, quality);
       }
 
-      // 2. Plugin Sources (Includes built-in YouTube/Bilibili)
+      // 2. Plugin Sources
       if (song.pluginId && song.pluginData) {
           const plugin = this.plugins.find(p => p.platform === song.pluginId);
-          if (plugin) {
+          if (plugin && plugin.getMediaSource) {
               try {
-                  const qMap: Record<string, string> = { 'standard': 'standard', 'exhigh': 'high', 'lossless': 'super' };
+                  const qMap: Record<string, string> = { 
+                      'standard': 'standard', 
+                      'exhigh': 'high', 
+                      'lossless': 'super' 
+                  };
                   const media = await plugin.getMediaSource(song.pluginData, qMap[quality]);
                   
                   if (media && media.url) {
@@ -445,20 +375,25 @@ export class ClientSideService {
   // --- Diagnostics ---
   async runDiagnostics(): Promise<DiagnosticResult[]> {
       const results: DiagnosticResult[] = [];
-      const start = Date.now();
       
-      // Test Internal Netease
-      results.push({ name: 'Netease (Internal)', status: 'ok', latency: 50, message: 'Ready' });
-
       // Test Plugins
       for(const p of this.plugins) {
           const pStart = Date.now();
           try {
-              await p.search('test', 1, 'music');
-              results.push({ name: `Plugin: ${p.name}`, status: 'ok', latency: Date.now() - pStart, message: 'Active' });
+              const res = await p.search('test', 1, 'music');
+              const valid = Array.isArray(res) || (res && Array.isArray((res as any).data));
+              results.push({ 
+                  name: `Plugin: ${p.name}`, 
+                  status: valid ? 'ok' : 'error', 
+                  latency: Date.now() - pStart, 
+                  message: valid ? 'Search OK' : 'Invalid Response' 
+              });
           } catch(e: any) {
               results.push({ name: `Plugin: ${p.name}`, status: 'error', latency: Date.now() - pStart, message: e.message });
           }
+      }
+      if (results.length === 0) {
+          results.push({ name: 'System', status: 'pending', latency: 0, message: 'No plugins loaded' });
       }
       return results;
   }
@@ -466,7 +401,6 @@ export class ClientSideService {
   // --- App API Support ---
   async getMvUrl(song: Song): Promise<string | null> { return null; }
   async getUserPlaylists(userId: string): Promise<Playlist[]> { 
-      // Reuse Netease logic for user playlists
       try {
           const res = await CapacitorHttp.get({
               url: `https://music.163.com/api/user/playlist?uid=${userId}&limit=30`,
@@ -500,7 +434,6 @@ export class ClientSideService {
       return [];
   }
   async getArtistDetail(id: string): Promise<{artist: Artist, songs: Song[]}> { 
-      // Stub
        return { artist: {id, name:'Unknown', coverUrl:''}, songs: [] };
   }
   async getDailyRecommendSongs(): Promise<Song[]> { return []; }
