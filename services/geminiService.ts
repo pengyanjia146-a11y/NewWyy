@@ -1,63 +1,36 @@
 // services/geminiService.ts
 
-private async searchYouTube(keyword: string): Promise<Song[]> {
-    const sortedInstances = [
-        this.activePipedInstance,
-        ...this.pipedInstances.filter(i => i !== this.activePipedInstance)
-    ];
-
-    // 仿照 MusicFree：定义多个可能的搜索过滤器顺序
-    const filters = ['music_videos', 'videos', 'all'];
-
-    for (const instance of sortedInstances) {
-        for (const filter of filters) {
-            try {
-                this.log(`YT Try: ${instance} (Filter: ${filter})`);
-                const url = `${instance}/search?q=${encodeURIComponent(keyword)}&filter=${filter}`;
-                
-                const response = await CapacitorHttp.get({ 
-                    url, 
-                    connectTimeout: 5000,
-                    headers: { 'User-Agent': 'Mozilla/5.0' }
-                });
-
-                let data = response.data;
-                if (typeof data === 'string') { try { data = JSON.parse(data); } catch(e){} }
-
-                // 鲁棒性检查：MusicFree 核心逻辑在于对结果集的泛化处理
-                const items = data?.items || data?.results || [];
-                
-                if (Array.isArray(items) && items.length > 0) {
-                    this.activePipedInstance = instance;
-                    this.log(`YT Success: ${instance} with ${items.length} results`);
-                    
-                    return items
-                        .filter((item: any) => item.type === 'video' || item.type === 'music_video')
-                        .map((item: any) => {
-                            // 兼容多种 ID 提取方式
-                            let videoId = '';
-                            if (item.videoId) videoId = item.videoId;
-                            else if (item.url) videoId = item.url.split('v=')[1]?.split('&')[0] || '';
-
-                            return {
-                                id: videoId,
-                                title: item.title || 'Unknown Title',
-                                artist: item.uploaderName || item.author || 'Unknown Artist',
-                                album: 'YouTube',
-                                coverUrl: item.thumbnail || item.thumbnails?.[0]?.url || '',
-                                source: MusicSource.YOUTUBE,
-                                duration: item.duration || 0,
-                                isGray: false
-                            };
-                        })
-                        .filter(s => s.id); // 过滤掉无效 ID
-                }
-            } catch(e: any) {
-                this.log(`YT Node Error: ${instance} - ${e.message}`);
-                break; // 当前节点报错则跳到下一个节点，不尝试其他 filter
-            }
+// 在 ClientSideService 类中修改 importPlugin 方法
+async importPlugin(code: string): Promise<boolean> {
+    try {
+        this.log("正在解析插件脚本...");
+        
+        // 模拟 CommonJS 的环境，定义一个空的 exports 对象
+        const module = { exports: {} as any };
+        
+        // 使用 Function 构造器执行代码
+        // code 是你读取的 JS 文件内容字符串
+        const pluginFunc = new Function('module', 'exports', code);
+        pluginFunc(module, module.exports);
+        
+        // 获取脚本导出的对象
+        const plugin = module.exports;
+        
+        // 基础验证：必须包含 id, name 和 search 方法
+        if (plugin.id && plugin.name && typeof plugin.search === 'function') {
+            // 如果已存在同 ID 插件，先移除（实现覆盖安装）
+            this.plugins = this.plugins.filter(p => p.id !== plugin.id);
+            
+            // 将插件存入内存数组
+            this.plugins.push(plugin);
+            this.log(`插件 [${plugin.name}] 安装成功`);
+            return true;
+        } else {
+            this.log("插件格式错误：缺少必要字段或 search 方法");
+            return false;
         }
+    } catch (e: any) {
+        this.log(`插件加载失败: ${e.message}`);
+        return false;
     }
-    this.log(`YT All Nodes/Filters Failed`);
-    return [];
 }
