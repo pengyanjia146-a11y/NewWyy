@@ -1,36 +1,32 @@
-// services/geminiService.ts
+// App.tsx 中的 handleFileChange 方法
 
-// 在 ClientSideService 类中修改 importPlugin 方法
-async importPlugin(code: string): Promise<boolean> {
-    try {
-        this.log("正在解析插件脚本...");
-        
-        // 模拟 CommonJS 的环境，定义一个空的 exports 对象
-        const module = { exports: {} as any };
-        
-        // 使用 Function 构造器执行代码
-        // code 是你读取的 JS 文件内容字符串
-        const pluginFunc = new Function('module', 'exports', code);
-        pluginFunc(module, module.exports);
-        
-        // 获取脚本导出的对象
-        const plugin = module.exports;
-        
-        // 基础验证：必须包含 id, name 和 search 方法
-        if (plugin.id && plugin.name && typeof plugin.search === 'function') {
-            // 如果已存在同 ID 插件，先移除（实现覆盖安装）
-            this.plugins = this.plugins.filter(p => p.id !== plugin.id);
-            
-            // 将插件存入内存数组
-            this.plugins.push(plugin);
-            this.log(`插件 [${plugin.name}] 安装成功`);
-            return true;
-        } else {
-            this.log("插件格式错误：缺少必要字段或 search 方法");
-            return false;
+const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setPluginLoading(true);
+    const reader = new FileReader();
+
+    reader.onload = async (event) => {
+        const code = event.target?.result as string;
+        if (code) {
+            // 调用 service 进行安装
+            const success = await musicService.importPlugin(code);
+            if (success) {
+                // 更新 UI 上的插件列表
+                setInstalledPlugins([...musicService.getPlugins()]);
+                showToast('插件导入成功', 'success');
+            } else {
+                showToast('插件解析失败，请检查格式', 'error');
+            }
         }
-    } catch (e: any) {
-        this.log(`插件加载失败: ${e.message}`);
-        return false;
-    }
-}
+        setPluginLoading(false);
+    };
+
+    reader.onerror = () => {
+        showToast('文件读取失败', 'error');
+        setPluginLoading(false);
+    };
+
+    reader.readAsText(file); // 以文本格式读取 JS 文件
+};
