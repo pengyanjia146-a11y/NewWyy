@@ -11,14 +11,14 @@ export enum MusicSource {
 
 export interface IMusicItem {
     id: string | number;     // Plugin unique ID
-    platform?: string;       // Platform code
+    platform?: string;       // Platform code (e.g. 'bilibili')
     title: string;
     artist: string;
     album: string;
     artwork: string;         // Cover URL
     url?: string;            // Direct URL (optional)
     duration?: number;       // Seconds
-    [key: string]: any;      // Extra props
+    [key: string]: any;      // Extra props allowed by MusicFree
 }
 
 export interface IMediaSource {
@@ -95,7 +95,7 @@ export interface UserProfile {
 }
 
 export interface MusicPlugin extends IPlugin {
-    id: string; // Alias for platform
+    id: string; // Alias for platform, used internally
     status: 'active' | 'disabled';
 }
 

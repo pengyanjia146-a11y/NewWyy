@@ -9,23 +9,6 @@ import qs from 'qs';
 import bigInt from 'big-integer';
 import he from 'he';
 
-// Polyfill-like helper
-function customPromiseAny<T>(promises: Promise<T>[]): Promise<T> {
-    return new Promise((resolve, reject) => {
-        let errors: any[] = [];
-        let pending = promises.length;
-        if (pending === 0) return reject(new Error("No promises"));
-
-        promises.forEach(p => {
-            Promise.resolve(p).then(resolve).catch(e => {
-                errors.push(e);
-                pending--;
-                if (pending === 0) reject(new Error("All promises rejected"));
-            });
-        });
-    });
-}
-
 interface SongPlayDetails {
     url: string;
     lyric?: string;
@@ -64,6 +47,7 @@ export class ClientSideService {
   public getLogs() { return this.logs; }
   public clearLogs() { this.logs = []; }
 
+  // Config stubs for compatibility
   setApiBaseUrl(url: string) { }
   setSearchTimeout(ms: number) { }
   setCustomInvidiousUrl(url: string) { }
@@ -91,7 +75,6 @@ export class ClientSideService {
   }
 
   // --- Mock Axios (The Bridge) ---
-  // Intercepts plugin requests and routes them through CapacitorHttp to bypass CORS
   private createMockAxios() {
       const request = async (config: any) => {
           const method = (config.method || 'GET').toUpperCase();
@@ -111,7 +94,7 @@ export class ClientSideService {
              data = qs.stringify(data);
           }
 
-          this.log(`[Plugin Req] ${method} ${finalUrl.substring(0, 50)}...`);
+          this.log(`[Plugin Req] ${method} ${finalUrl.substring(0, 40)}...`);
 
           try {
               const response = await CapacitorHttp.request({
@@ -122,7 +105,6 @@ export class ClientSideService {
                   connectTimeout: 15000,
               });
 
-              // Process Response Data
               let responseData = response.data;
               const contentType = response.headers['Content-Type'] || response.headers['content-type'] || '';
               
@@ -160,10 +142,10 @@ export class ClientSideService {
           const mockAxios = this.createMockAxios();
           const module = { exports: {} as any };
           
-          // Environment Injection (MusicFree Standard)
+          // Environment Injection
           const env = {
               axios: mockAxios,
-              http: mockAxios, // Alias
+              http: mockAxios,
               cheerio: cheerio,
               qs: qs,
               CryptoJS: CryptoJS,
@@ -183,13 +165,11 @@ export class ClientSideService {
               }
           };
 
-          // Wrap code in a function to isolate scope
           const runPlugin = new Function(
               'axios', 'http', 'cheerio', 'qs', 'CryptoJS', 'bigInt', 'he', 'module', 'exports', 'require', 'console',
               code
           );
 
-          // Execute
           runPlugin(
               env.axios, env.http, env.cheerio, env.qs, env.CryptoJS, env.bigInt, env.he, 
               env.module, env.exports, env.require, env.console
@@ -197,7 +177,6 @@ export class ClientSideService {
 
           const plugin = module.exports;
           
-          // Validation
           if (!plugin.platform || !plugin.search) {
               throw new Error("Invalid plugin: missing platform or search method");
           }
@@ -208,11 +187,10 @@ export class ClientSideService {
               id: plugin.platform
           };
 
-          // Overwrite existing plugin with same platform
           this.plugins = this.plugins.filter(p => p.platform !== musicPlugin.platform);
           this.plugins.push(musicPlugin);
           
-          this.log(`Plugin Loaded: ${musicPlugin.name} (${musicPlugin.platform}) v${musicPlugin.version}`);
+          this.log(`Plugin Loaded: ${musicPlugin.name || musicPlugin.platform} v${musicPlugin.version}`);
           return true;
 
       } catch (e: any) {
@@ -222,28 +200,30 @@ export class ClientSideService {
       }
   }
 
-  // --- Install Plugin from URL ---
-  async installPluginFromUrl(url: string): Promise<boolean> {
+  // --- Install Plugin from URL (Updated) ---
+  // Returns success status AND the code for persistence
+  async installPluginFromUrl(url: string): Promise<{success: boolean; code?: string}> {
       try {
-          this.log(`Downloading plugin from: ${url}`);
+          this.log(`Downloading plugin: ${url}`);
           const res = await CapacitorHttp.get({ url });
           if (res.status === 200 && typeof res.data === 'string') {
-              return await this.importPlugin(res.data);
+              const success = await this.importPlugin(res.data);
+              return { success, code: res.data };
           }
           throw new Error(`Failed to download: Status ${res.status}`);
       } catch (e: any) {
           this.log(`Install Error: ${e.message}`);
-          return false;
+          return { success: false };
       }
   }
 
   getPlugins() { return this.plugins; }
 
-  // --- Core: Search Music (Unified) ---
+  // --- Core: Search Music ---
   async searchMusic(query: string, onProgress: (songs: Song[]) => void): Promise<void> {
     this.log(`Search: "${query}"`);
     
-    // 1. Netease (Internal Fallback)
+    // 1. Netease (Internal)
     this.searchNetease(query).then(songs => {
         if(songs.length > 0) onProgress(songs);
     }).catch(e => this.log(`Netease Error: ${e}`));
@@ -251,10 +231,9 @@ export class ClientSideService {
     // 2. Plugins (Dynamic)
     this.plugins.forEach(async (plugin) => {
         try {
-            this.log(`Plugin [${plugin.name}] searching...`);
+            this.log(`Plugin [${plugin.platform}] searching...`);
             const result = await plugin.search(query, 1, 'music');
             
-            // Normalize result: support both Array and {data: Array}
             let items: IMusicItem[] = [];
             if (Array.isArray(result)) {
                 items = result;
@@ -264,30 +243,26 @@ export class ClientSideService {
 
             if (items.length > 0) {
                 const songs: Song[] = items.map(item => this.mapPluginItemToSong(item, plugin));
-                this.log(`Plugin [${plugin.name}] found ${songs.length}`);
                 onProgress(songs);
-            } else {
-                this.log(`Plugin [${plugin.name}] empty`);
             }
         } catch(e: any) {
-            this.log(`Plugin [${plugin.name}] failed: ${e.message}`);
+            this.log(`Plugin [${plugin.platform}] failed: ${e.message}`);
         }
     });
   }
 
   private mapPluginItemToSong(item: IMusicItem, plugin: MusicPlugin): Song {
-      // Basic Source Mapping for UI Icons
       let source = MusicSource.PLUGIN;
-      const pid = plugin.platform.toLowerCase();
+      const pid = (plugin.platform || '').toLowerCase();
       if (pid.includes('youtube') || pid.includes('yt')) source = MusicSource.YOUTUBE;
-      if (pid.includes('bilibili') || pid.includes('bili')) source = MusicSource.BILIBILI;
+      else if (pid.includes('bilibili') || pid.includes('bili')) source = MusicSource.BILIBILI;
 
       return {
           id: String(item.id),
           title: item.title,
           artist: item.artist,
-          album: item.album || plugin.name,
-          coverUrl: item.artwork || '',
+          album: item.album || plugin.name || 'Unknown',
+          coverUrl: item.artwork || item.cover || '',
           source: source,
           duration: item.duration || 0,
           pluginId: plugin.platform,
@@ -298,12 +273,10 @@ export class ClientSideService {
 
   // --- Playback Logic ---
   async getSongDetails(song: Song, quality: AudioQuality = 'standard'): Promise<SongPlayDetails> {
-      // 1. Netease Internal
       if (song.source === MusicSource.NETEASE) {
           return this.getNeteaseDetails(song, quality);
       }
 
-      // 2. Plugin Sources
       if (song.pluginId && song.pluginData) {
           const plugin = this.plugins.find(p => p.platform === song.pluginId);
           if (plugin && plugin.getMediaSource) {
@@ -313,7 +286,9 @@ export class ClientSideService {
                       'exhigh': 'high', 
                       'lossless': 'super' 
                   };
-                  const media = await plugin.getMediaSource(song.pluginData, qMap[quality]);
+                  const targetQ = qMap[quality] || 'standard';
+                  
+                  const media = await plugin.getMediaSource(song.pluginData, targetQ);
                   
                   if (media && media.url) {
                       return {
@@ -330,7 +305,7 @@ export class ClientSideService {
       return { url: song.audioUrl || '' };
   }
 
-  // --- Netease Logic (Internal Legacy) ---
+  // --- Netease Logic (Legacy) ---
   private async searchNetease(keyword: string): Promise<Song[]> {
       try {
           const url = 'https://music.163.com/api/cloudsearch/pc';
@@ -375,21 +350,19 @@ export class ClientSideService {
   // --- Diagnostics ---
   async runDiagnostics(): Promise<DiagnosticResult[]> {
       const results: DiagnosticResult[] = [];
-      
-      // Test Plugins
       for(const p of this.plugins) {
           const pStart = Date.now();
           try {
               const res = await p.search('test', 1, 'music');
               const valid = Array.isArray(res) || (res && Array.isArray((res as any).data));
               results.push({ 
-                  name: `Plugin: ${p.name}`, 
+                  name: `Plugin: ${p.name || p.platform}`, 
                   status: valid ? 'ok' : 'error', 
                   latency: Date.now() - pStart, 
                   message: valid ? 'Search OK' : 'Invalid Response' 
               });
           } catch(e: any) {
-              results.push({ name: `Plugin: ${p.name}`, status: 'error', latency: Date.now() - pStart, message: e.message });
+              results.push({ name: `Plugin: ${p.name || p.platform}`, status: 'error', latency: Date.now() - pStart, message: e.message });
           }
       }
       if (results.length === 0) {
@@ -398,7 +371,7 @@ export class ClientSideService {
       return results;
   }
 
-  // --- App API Support ---
+  // --- Stubs ---
   async getMvUrl(song: Song): Promise<string | null> { return null; }
   async getUserPlaylists(userId: string): Promise<Playlist[]> { 
       try {
@@ -420,19 +393,7 @@ export class ClientSideService {
       } catch(e) {}
       return [];
   }
-  async importNeteasePlaylist(pid: string): Promise<Song[]> { 
-       try {
-          const res = await CapacitorHttp.get({
-              url: `https://music.163.com/api/playlist/detail?id=${pid}`,
-              headers: this.getNeteaseHeaders()
-          });
-          const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
-          if (data.result?.tracks) {
-              return data.result.tracks.map((t: any) => this.mapNeteaseSong(t));
-          }
-      } catch(e) {}
-      return [];
-  }
+  async importNeteasePlaylist(pid: string): Promise<Song[]> { return []; }
   async getArtistDetail(id: string): Promise<{artist: Artist, songs: Song[]}> { 
        return { artist: {id, name:'Unknown', coverUrl:''}, songs: [] };
   }
