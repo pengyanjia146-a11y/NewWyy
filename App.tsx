@@ -68,6 +68,22 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const localFileInputRef = useRef<HTMLInputElement>(null);
   const [pluginLoading, setPluginLoading] = useState(false);
+
+  // Load Plugins on Startup
+  useEffect(() => {
+      const loadPlugins = async () => {
+          try {
+              const savedCodes = JSON.parse(localStorage.getItem('unistream_plugins_code') || '[]');
+              if (savedCodes.length > 0) {
+                  for (const code of savedCodes) {
+                      await musicService.importPlugin(code);
+                  }
+                  setInstalledPlugins([...musicService.getPlugins()]);
+              }
+          } catch (e) { console.error("Plugin load failed", e); }
+      };
+      loadPlugins();
+  }, []);
   
   // Diagnostics State
   const [diagnosticResults, setDiagnosticResults] = useState<DiagnosticResult[]>([]);
@@ -370,17 +386,58 @@ export default function App() {
       setSearchLoading(false);
   };
 
-  // ... (File Imports logic unchanged)
-  // ... (Playlist Management logic unchanged)
-  // ... (Settings & Plugins logic unchanged)
+  // --- Handlers ---
 
-  const handleTextImport = async () => { /* ... */ setShowImport(false); };
-  const handleNeteaseImport = async () => { /* ... */ setShowNeteaseImport(false); };
+  const handleTextImport = async () => { setShowImport(false); };
+  const handleNeteaseImport = async () => { setShowNeteaseImport(false); };
   const handleLocalFileClick = () => { localFileInputRef.current?.click(); };
-  const handleLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => { /* ... */ };
-  const createPlaylist = () => { /* ... */ };
+  const handleLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => { /* TODO: Implement Local File Player */ };
+  const createPlaylist = () => { /* TODO */ };
   const handleImportPluginFileClick = () => { fileInputRef.current?.click(); };
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => { /* ... */ };
+  
+  // PLUGIN IMPORT HANDLER
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      setPluginLoading(true);
+      const reader = new FileReader();
+      
+      reader.onload = async (event) => {
+          const content = event.target?.result as string;
+          if (content) {
+              const success = await musicService.importPlugin(content);
+              if (success) {
+                  setInstalledPlugins([...musicService.getPlugins()]);
+                  showToast('插件导入成功', 'success');
+                  // Persist
+                  const currentSaved = JSON.parse(localStorage.getItem('unistream_plugins_code') || '[]');
+                  // Avoid dupes by basic string compare
+                  if (!currentSaved.includes(content)) {
+                      currentSaved.push(content);
+                      try {
+                          localStorage.setItem('unistream_plugins_code', JSON.stringify(currentSaved));
+                      } catch(e) {
+                          showToast('插件较大，无法持久化缓存', 'info');
+                      }
+                  }
+              } else {
+                  showToast('插件解析失败，格式不正确', 'error');
+              }
+              setPluginLoading(false);
+          }
+      };
+      
+      reader.onerror = () => {
+          showToast('读取文件失败', 'error');
+          setPluginLoading(false);
+      };
+
+      reader.readAsText(file);
+      // Reset input
+      if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   const handleSaveCustomUrl = () => { setSettings(s => ({ ...s, customInvidious: settings.customInvidious })); showToast('设置已保存', 'success'); };
 
   const songItemProps = (song: Song) => ({
@@ -413,7 +470,6 @@ export default function App() {
   };
 
   const renderHome = () => (
-    // UPDATED: Increased padding-bottom to pb-40
     <div className="space-y-8 animate-fade-in pb-40">
       <div className="relative h-48 md:h-64 rounded-2xl bg-gradient-to-r from-gray-900 to-primary overflow-hidden flex items-center p-6 shadow-2xl">
         <div className="relative z-10 w-full">
@@ -465,7 +521,6 @@ export default function App() {
   );
 
   const renderLibrary = () => (
-      // UPDATED: Increased padding-bottom to pb-40
       <div className="pb-40 animate-fade-in relative">
           {!activePlaylist ? (
               <>
@@ -586,7 +641,6 @@ export default function App() {
       const isFollowedArtist = isFollowed(activeArtist.info.id);
 
       return (
-          // UPDATED: Increased padding-bottom to pb-40
           <div className="pb-40 animate-fade-in">
                <button onClick={() => setView('LIBRARY')} className="text-sm text-gray-400 hover:text-white mb-4 flex items-center gap-1">← 返回我的音乐</button>
                <div className="flex flex-col md:flex-row items-center gap-6 mb-8">
@@ -637,7 +691,6 @@ export default function App() {
       });
 
       return (
-      // UPDATED: Increased padding-bottom to pb-40
       <div className="pb-40 animate-fade-in">
            <form onSubmit={handleSearch} className="mb-4 sticky top-0 bg-dark z-20 py-4 shadow-xl">
                 <div className="relative">
@@ -646,7 +699,6 @@ export default function App() {
                 </div>
            </form>
            
-           {/* Search Tabs */}
            {(searchResults.length > 0 || searchLoading) && (
                <div className="flex items-center gap-2 mb-6 overflow-x-auto no-scrollbar px-1 sticky top-20 bg-dark z-10 py-2">
                     {[
@@ -671,7 +723,6 @@ export default function App() {
                </div>
            )}
 
-           {/* Search History */}
            {!searchQuery && searchHistory.length > 0 && searchResults.length === 0 && !searchLoading && (
                <div className="mb-8 animate-fade-in">
                    <div className="flex justify-between items-center mb-3 px-1">
@@ -688,14 +739,12 @@ export default function App() {
                </div>
            )}
            
-           {/* Results List */}
            {searchResults.length > 0 && (
                <div className="space-y-2">
                    {filteredResults.map(song => <SongItem key={song.id} {...songItemProps(song)} />)}
                </div>
            )}
            
-           {/* Loading Spinner */}
            {searchLoading && (
                <div className="flex justify-center py-6 animate-fade-in">
                    <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-full">
@@ -712,10 +761,7 @@ export default function App() {
       );
   };
   
-  // ... (Remainder kept same)
-  // ...
   const renderLabs = () => (
-    // UPDATED: Increased padding-bottom to pb-40
     <div className="pb-40 animate-fade-in">
          <h2 className="text-2xl font-bold mb-6 flex items-center gap-2"><LabIcon /> 实验室</h2>
          <div className="bg-white/5 p-4 rounded-xl mb-6">
@@ -747,7 +793,7 @@ export default function App() {
                  </button>
              </div>
              {installedPlugins.length === 0 ? (
-                 <p className="text-gray-500 text-xs">暂无插件，支持导入 .js / .json 格式插件</p>
+                 <p className="text-gray-500 text-xs">暂无插件，支持导入 .js / .json 格式插件 (MusicFree 规范)</p>
              ) : (
                  <div className="space-y-2">
                      {installedPlugins.map(p => (
@@ -776,7 +822,6 @@ export default function App() {
   );
 
   const renderSettings = () => (
-    // UPDATED: Increased padding-bottom to pb-40
     <div className="pb-40 animate-fade-in">
          <h2 className="text-2xl font-bold mb-6 flex items-center gap-2"><SettingsIcon /> 设置</h2>
          <div className="space-y-6">
@@ -879,7 +924,6 @@ export default function App() {
   );
 }
 
-// ... (Rest of the file remains unchanged)
 const NavBtn = ({ icon, label, active, onClick }: any) => (
   <button onClick={onClick} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all ${active ? 'bg-white/10 text-white font-medium' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}>
     {React.cloneElement(icon, { size: 20 })}
