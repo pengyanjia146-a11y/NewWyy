@@ -10,42 +10,53 @@ interface SongPlayDetails {
 }
 
 export class ClientSideService {
+  // 1. 基础请求头 - 模拟 PC 浏览器访问网易云
   private baseHeaders = {
     'Referer': 'https://music.163.com/',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     'Content-Type': 'application/x-www-form-urlencoded',
     'X-Real-IP': '115.239.211.112', 
     'X-Forwarded-For': '115.239.211.112'
   };
   
+  // 2. Bilibili 伪装头
   private bilibiliHeaders = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     'Referer': 'https://www.bilibili.com/'
   };
 
-  // Browser Simulation Headers for YouTube
+  // 3. YouTube 深度伪装头 - 模拟真实 Chrome 浏览器的媒体请求
+  // 关键：Sec-Fetch-* 头能极大降低被判定为机器人的概率
   private youtubeHeaders = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     'Referer': 'https://www.youtube.com/',
-    'Accept-Language': 'en-US,en;q=0.9'
+    'Origin': 'https://www.youtube.com',
+    'Accept': '*/*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Sec-Fetch-Dest': 'audio',
+    'Sec-Fetch-Mode': 'cors',
+    'Sec-Fetch-Site': 'cross-site',
+    'Pragma': 'no-cache',
+    'Cache-Control': 'no-cache'
   };
 
-  // High availability Piped instances list (Public Mirrors)
+  // 4. 高可用公共 Piped 镜像池 (持续更新)
   private pipedInstances = [
-    "https://pipedapi.kavin.rocks",
-    "https://api.piped.video",
-    "https://pipedapi.drg.li", 
-    "https://piped-api.lunar.icu",
+    "https://pipedapi.kavin.rocks",     // 官方主节点，稳定但较慢
+    "https://api.piped.video",          // 备用主节点
+    "https://pipedapi.drg.li",          // 欧洲节点，速度快
+    "https://piped-api.lunar.icu",      // 亚洲优化
     "https://api.piped.yt",
     "https://ytapi.dc09.ru",
-    "https://pipedapi.system41.cl"
+    "https://pipedapi.system41.cl",
+    "https://piped-api.garudalinux.org"
   ];
 
-  private activePipedInstance = this.pipedInstances[0]; // Cache the working instance
+  private activePipedInstance = this.pipedInstances[0]; // 记住当前好用的节点
 
   private plugins: any[] = [];
   private guestCookie = '';
-  private apiBaseUrl = ''; // Optional backend
+  private apiBaseUrl = ''; 
   private logs: string[] = [];
   
   constructor() {
@@ -117,34 +128,35 @@ export class ClientSideService {
 
   // --- Streaming Search ---
   async searchMusic(query: string, onProgress: (songs: Song[]) => void): Promise<void> {
-    this.log(`Streaming Search: "${query}"`);
+    this.log(`Search Start: "${query}"`);
     
-    // 1. Netease (5s Timeout)
+    // 1. Netease (Fast)
     const taskNetease = this.timeoutPromise(this.searchNetease(query), 5000, [])
         .then(songs => { if(songs.length) onProgress(songs); });
 
-    // 2. Bilibili (Fallback Direct, 5s Timeout)
-    const taskBilibili = this.timeoutPromise(this.searchBilibili(query), 5000, [])
+    // 2. Bilibili (Medium)
+    const taskBilibili = this.timeoutPromise(this.searchBilibili(query), 6000, [])
         .then(songs => { if(songs.length) onProgress(songs); });
 
-    // 3. YouTube (Standalone Piped, 12s Timeout to allow rotation)
-    const taskYoutube = this.timeoutPromise(this.searchYouTube(query), 12000, [])
+    // 3. YouTube (Slow - Needs Rotation)
+    // Give it more time (15s) because it might fail on 2-3 nodes before finding a working one
+    const taskYoutube = this.timeoutPromise(this.searchYouTube(query), 15000, [])
         .then(songs => { if(songs.length) onProgress(songs); });
 
-    // 4. Plugins (8s Timeout)
+    // 4. Plugins
     const taskPlugins = this.plugins.map(p => 
         this.timeoutPromise(this.searchPlugin(p, query), 8000, [])
             .then(songs => { if(songs.length) onProgress(songs); })
     );
 
     await Promise.allSettled([taskNetease, taskBilibili, taskYoutube, ...taskPlugins]);
-    this.log("All search tasks finished.");
+    this.log("Search Complete.");
   }
 
   // --- Search Implementations ---
 
   private async searchYouTube(keyword: string): Promise<Song[]> {
-      // Re-order instances to prioritize the active one
+      // 智能排序：优先使用上次成功的节点，其次是其他节点
       const sortedInstances = [
           this.activePipedInstance,
           ...this.pipedInstances.filter(i => i !== this.activePipedInstance)
@@ -152,20 +164,24 @@ export class ClientSideService {
 
       for (const instance of sortedInstances) {
           try {
-              this.log(`Piped Search: ${instance}`);
+              this.log(`YT Try: ${instance}`);
               const url = `${instance}/search?q=${encodeURIComponent(keyword)}&filter=music_videos`;
               
+              // 使用 CapacitorHttp 发送原生请求，绕过浏览器 CORS 限制
               const response = await CapacitorHttp.get({ 
                   url, 
                   connectTimeout: 5000,
-                  headers: this.youtubeHeaders
+                  headers: {
+                      'User-Agent': this.youtubeHeaders['User-Agent'] // 简单的 UA 即可用于 API 搜索
+                  }
               });
 
               let data = response.data;
               if (typeof data === 'string') { try { data = JSON.parse(data); } catch(e){} }
 
               if (data && data.items && Array.isArray(data.items)) {
-                  this.activePipedInstance = instance; // Mark as reliable
+                  this.activePipedInstance = instance; // 标记该节点为“健康”
+                  this.log(`YT Success: ${instance}`);
                   
                   return data.items.map((item: any) => ({
                       id: item.url.split('/watch?v=')[1],
@@ -179,10 +195,10 @@ export class ClientSideService {
                   }));
               }
           } catch(e: any) {
-              this.log(`Piped error: ${e.message || e}`);
-              // Continue to next instance
+              // 当前节点失败，静默继续下一个
           }
       }
+      this.log(`YT All Failed`);
       return [];
   }
 
@@ -265,40 +281,43 @@ export class ClientSideService {
       return [];
   }
 
-  // --- Audio Proxy (Local Browser Simulation) ---
-  // Downloads the stream chunk by chunk (handled by native OS) and creates a local Blob URL.
-  // This bypasses 403 Forbidden because the request comes from the "browser" (Capacitor) 
-  // with correct headers, not from an Audio element which is restricted.
+  // --- 本地音频代理 (核心黑科技) ---
+  // 原理：直接播放 googlevideo.com 链接会被 403。
+  // 我们使用 CapacitorHttp (Native HTTP) 下载音频数据块，并在本地生成 Blob URL。
+  // 这样对于 Google 来说，这就是一个正常的浏览器下载请求。
   private async getProxiedAudioUrl(url: string, referer: string): Promise<string> {
       try {
-          this.log(`Proxying audio: ${url.substring(0, 30)}...`);
+          this.log(`Proxying: ${url.substring(0, 25)}...`);
+          
           const res = await CapacitorHttp.get({
               url: url,
-              responseType: 'blob',
-              headers: { 
-                  'Referer': referer,
-                  'User-Agent': this.youtubeHeaders['User-Agent']
-              }
+              responseType: 'blob', // 关键：告诉 Native 层返回二进制数据
+              headers: this.youtubeHeaders // 注入完整的 Chrome 伪装头
           });
+
           if (res.data) {
              const base64 = res.data;
              const mime = res.headers['content-type'] || 'audio/mp4';
+             
+             // Base64 -> Uint8Array -> Blob
              const binary = atob(base64);
              const array = new Uint8Array(binary.length);
              for(let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
              const blob = new Blob([array], { type: mime });
+             
+             // 生成本地内存地址 (blob:http://localhost/...)
              const blobUrl = URL.createObjectURL(blob);
-             this.log(`Proxy success: ${blobUrl}`);
+             this.log(`Proxy OK: ${blobUrl.substring(0, 20)}...`);
              return blobUrl;
           }
-      } catch (e) {
-          this.log(`Proxy failed: ${e}`);
+      } catch (e: any) {
+          this.log(`Proxy Fail: ${e.message || e}`);
       }
-      return url; // Fallback to original URL
+      return url; // 如果代理失败，尝试返回原链接（死马当活马医）
   }
 
   async getSongDetails(song: Song, quality: AudioQuality = 'standard'): Promise<SongPlayDetails> {
-      // --- YOUTUBE STANDALONE (Browser Simulation) ---
+      // --- YOUTUBE 本地解析逻辑 ---
       if (song.source === MusicSource.YOUTUBE) {
           const sortedInstances = [
               this.activePipedInstance,
@@ -307,11 +326,13 @@ export class ClientSideService {
 
           for (const instance of sortedInstances) {
                try {
-                   this.log(`Resolving YT: ${instance}`);
+                   this.log(`Resolving: ${instance}`);
                    const res = await CapacitorHttp.get({ 
                        url: `${instance}/streams/${song.id}`, 
-                       connectTimeout: 5000,
-                       headers: this.youtubeHeaders
+                       connectTimeout: 6000, // 稍微放宽超时
+                       headers: {
+                           'User-Agent': this.youtubeHeaders['User-Agent']
+                       }
                    });
                    
                    let data = res.data;
@@ -320,7 +341,7 @@ export class ClientSideService {
                    if (data && data.audioStreams && data.audioStreams.length > 0) {
                        this.activePipedInstance = instance;
                        
-                       // Select Best Audio
+                       // 优先选择 m4a (兼容性最好)，其次是高质量流
                        const streams = data.audioStreams;
                        const preferredStream = 
                            streams.find((s: any) => s.mimeType === 'audio/mp4' && s.quality === 'highest') ||
@@ -330,8 +351,8 @@ export class ClientSideService {
                        if (preferredStream) {
                            let finalUrl = preferredStream.url;
                            
-                           // CRITICAL: If URL is direct googlevideo.com, Proxy it locally to simulate browser headers.
-                           // Otherwise the HTML5 Audio tag will fail with 403.
+                           // 核心逻辑：检测是否为 Google 视频源
+                           // 如果是，必须走本地代理下载，否则会被 403
                            if (finalUrl.includes('googlevideo.com')) {
                                finalUrl = await this.getProxiedAudioUrl(finalUrl, 'https://www.youtube.com/');
                            }
@@ -340,7 +361,7 @@ export class ClientSideService {
                        }
                    }
                } catch(e) {
-                   // Try next instance
+                   // 当前节点解析失败，自动尝试下一个
                }
           }
           return { url: '' };
@@ -430,7 +451,7 @@ export class ClientSideService {
       try {
           const res = await CapacitorHttp.get({ url: `${this.activePipedInstance}/`, connectTimeout: 3000 });
           if (res.status === 200) {
-              results.push({ name: 'YouTube (Piped)', status: 'ok', latency: Date.now() - pipedStart, message: 'Connected' });
+              results.push({ name: 'YouTube (Piped)', status: 'ok', latency: Date.now() - pipedStart, message: this.activePipedInstance });
           } else throw new Error();
       } catch(e) {
           results.push({ name: 'YouTube (Piped)', status: 'error', latency: 0, message: 'Failed' });
