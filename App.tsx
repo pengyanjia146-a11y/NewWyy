@@ -380,7 +380,28 @@ export default function App() {
   const handleLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => { /* ... */ };
   const createPlaylist = () => { /* ... */ };
   const handleImportPluginFileClick = () => { fileInputRef.current?.click(); };
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => { /* ... */ };
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+        const code = event.target?.result as string;
+        if (code) {
+            // 调用重构后的 musicService
+            const success = await musicService.importPlugin(code);
+            if (success) {
+                // 更新 UI 状态
+                setInstalledPlugins([...musicService.getPlugins()]);
+                showToast("音源插件加载成功", "success");
+            } else {
+                showToast("插件协议校验不通过", "error");
+            }
+        }
+    };
+    reader.onerror = () => showToast("读取文件失败", "error");
+    reader.readAsText(file);
+};
   const handleSaveCustomUrl = () => { setSettings(s => ({ ...s, customInvidious: settings.customInvidious })); showToast('设置已保存', 'success'); };
 
   const songItemProps = (song: Song) => ({
