@@ -72,11 +72,13 @@ const mapNeteaseSong = (item) => ({
 });
 
 const mapYoutubeSong = (item) => {
+    // youtubei.js returns structured objects
     const title = item.title.text || item.title;
     const author = item.author?.name || item.author?.text || 'Unknown';
     const id = item.id;
     const thumbnails = item.thumbnails || [];
     const coverUrl = thumbnails.length > 0 ? thumbnails[0].url : '';
+    // Duration is usually a string "3:45" or seconds in some contexts
     let duration = 0;
     if (item.duration && item.duration.seconds) duration = item.duration.seconds;
     
@@ -93,6 +95,7 @@ const mapYoutubeSong = (item) => {
 };
 
 const mapBiliSong = (item) => {
+    // Helper to parse Bili duration "MM:SS" or "HH:MM:SS"
     const parseDuration = (str) => {
         if (!str) return 0;
         const parts = str.split(':').map(Number);
@@ -115,7 +118,7 @@ const mapBiliSong = (item) => {
 
 // --- API Endpoints ---
 
-// 1. Unified Search API (Netease + YouTube + Bilibili)
+// 1. Unified Search API
 app.get('/api/search', async (req, res) => {
   const { q } = req.query;
   const cookie = req.query.cookie || ''; 
@@ -125,31 +128,19 @@ app.get('/api/search', async (req, res) => {
   // Define tasks
   const tasks = [];
 
-  // Task 1: Netease
+  // Netease Task
   tasks.push(neteaseSearch({ keywords: q, type: 1, limit: 10, cookie })
       .then(data => ({ source: 'NETEASE', data: data.body.result?.songs || [] }))
       .catch(e => ({ source: 'NETEASE', error: e }))
   );
 
-  // Task 2: YouTube
+  // YouTube Task
   if (yt) {
       tasks.push(yt.search(q, { type: 'video' })
           .then(data => ({ source: 'YOUTUBE', data: data.results || [] }))
           .catch(e => ({ source: 'YOUTUBE', error: e }))
       );
   }
-
-  // Task 3: Bilibili (Proxy)
-  // Logic ported from the standalone endpoint to unified flow
-  tasks.push(axios.get(`https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${encodeURIComponent(q)}`, {
-      headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Referer': 'https://www.bilibili.com/',
-          'Cookie': "buvid3=infoc;" 
-      }
-  }).then(resp => ({ source: 'BILIBILI', data: resp.data?.data?.result || [] }))
-    .catch(e => ({ source: 'BILIBILI', error: e }))
-  );
 
   try {
       const results = await Promise.all(tasks);
@@ -160,13 +151,9 @@ app.get('/api/search', async (req, res) => {
               songs = [...songs, ...r.data.map(mapNeteaseSong)];
           } else if (r.source === 'YOUTUBE' && r.data) {
               songs = [...songs, ...r.data.filter(i => i.type === 'Video').slice(0, 5).map(mapYoutubeSong)];
-          } else if (r.source === 'BILIBILI' && r.data) {
-              songs = [...songs, ...r.data.slice(0, 5).map(mapBiliSong)];
           }
       });
 
-      // Shuffle or Sort? For now, we just append them. 
-      // You could interleave them here if you wanted a mixed feel.
       res.json({ songs });
   } catch (error) {
     console.error('Search Error:', error);
@@ -174,23 +161,55 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// 2. YouTube Play Redirect Endpoint
+// 2. Bilibili Proxy Search API
+app.get('/api/search/bilibili', async (req, res) => {
+    const { q } = req.query;
+    if (!q) return res.status(400).json({ error: 'Query required' });
+
+    try {
+        const url = `https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${encodeURIComponent(q)}`;
+        const response = await axios.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://www.bilibili.com/',
+                'Cookie': "buvid3=infoc;" // Bypass basic anti-bot
+            }
+        });
+
+        if (response.data && response.data.data && response.data.data.result) {
+            const songs = response.data.data.result.map(mapBiliSong);
+            return res.json({ songs });
+        }
+        return res.json({ songs: [] });
+    } catch (e) {
+        console.error("Bili Search Error:", e.message);
+        return res.status(500).json({ error: 'Bilibili failed' });
+    }
+});
+
+// 3. YouTube Play Redirect Endpoint
 app.get('/api/yt/play', async (req, res) => {
     const { id } = req.query;
     if(!id) return res.status(400).send('ID required');
     if(!yt) return res.status(503).send('YouTube client not ready');
 
     try {
+        // Use Android client emulation for better stability
         const info = await yt.getBasicInfo(id, 'ANDROID');
+        
         const streamingData = info.streaming_data;
         if (!streamingData) return res.status(404).send('No streaming data');
 
+        // Prefer audio-only formats (m4a/webm)
         const formats = [...(streamingData.adaptive_formats || []), ...(streamingData.formats || [])];
         const audioFormats = formats.filter(f => f.mime_type.includes('audio'));
         
+        // Sort by bitrate descending
         audioFormats.sort((a, b) => b.bitrate - a.bitrate);
 
         if (audioFormats.length > 0) {
+            // Redirect directly to Google's server
+            // Frontend will handle this 302
             return res.redirect(audioFormats[0].url);
         } else {
             return res.status(404).send('No audio format found');
@@ -201,7 +220,7 @@ app.get('/api/yt/play', async (req, res) => {
     }
 });
 
-// 3. Get Playable URL (General resolver)
+// 4. Get Playable URL (General resolver)
 app.get('/api/url', async (req, res) => {
   const { id, source, cookie } = req.query;
   const host = req.get('host'); 
@@ -221,9 +240,12 @@ app.get('/api/url', async (req, res) => {
           return res.status(500).json({ error: 'Netease Error' });
       }
   } else if (source === 'YOUTUBE') {
+      // Return the backend redirect endpoint
       const streamUrl = `${protocol}://${host}/api/yt/play?id=${id}`;
       return res.json({ url: streamUrl });
   } else if (source === 'BILIBILI') {
+      // Just resolving metadata here if needed, or proxying if client can't direct play
+      // For now, return a proxy structure or direct URL if possible
       try {
         const viewRes = await axios.get(`https://api.bilibili.com/x/web-interface/view?bvid=${id}`);
         const cid = viewRes.data?.data?.cid;
@@ -234,6 +256,9 @@ app.get('/api/url', async (req, res) => {
         const realUrl = playRes.data?.data?.durl?.[0]?.url;
         
         if (!realUrl) return res.status(404).json({ error: 'Play URL not found' });
+        
+        // Return real URL. Client CapacitorHttp can play it if Referer is set in plugin or if it's open.
+        // If 403, client might need a proxy. Let's return the URL for now.
         return res.json({ url: realUrl });
       } catch (e) {
           console.error("Bilibili Error", e.message);

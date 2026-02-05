@@ -4,68 +4,24 @@ export enum MusicSource {
   YOUTUBE = 'YOUTUBE',
   BILIBILI = 'BILIBILI',
   LOCAL = 'LOCAL',
-  PLUGIN = 'PLUGIN'
+  PLUGIN = 'PLUGIN' // For MusicFree style plugins
 }
-
-// --- MusicFree Compatible Interfaces ---
-
-export interface IMusicItem {
-    id: string | number;     // Plugin unique ID
-    platform?: string;       // Platform code (e.g. 'bilibili')
-    title: string;
-    artist: string;
-    album: string;
-    artwork: string;         // Cover URL
-    url?: string;            // Direct URL (optional)
-    duration?: number;       // Seconds
-    [key: string]: any;      // Extra props allowed by MusicFree
-}
-
-export interface IMediaSource {
-    url: string;
-    headers?: Record<string, string>;
-    userAgent?: string;
-    lyric?: string;
-}
-
-export interface IPlugin {
-    platform: string;        // Unique ID (e.g., 'qq', 'kw', 'bilibili')
-    name: string;
-    version: string;
-    appVersion?: string;     // Supported app version
-    author?: string;
-    srcUrl?: string;         // Origin URL
-    
-    // Core Methods (MusicFree Protocol)
-    // Returns array directly OR { data: [], isEnd: boolean }
-    search: (query: string, page: number, type: string) => Promise<IMusicItem[] | { data: IMusicItem[], isEnd: boolean }>;
-    
-    getMediaSource: (musicItem: IMusicItem, quality: string) => Promise<{ url: string; headers?: Record<string, string>; lyric?: string } | null>;
-    
-    getMusicInfo?: (musicItem: IMusicItem) => Promise<Partial<IMusicItem>>;
-    getLyric?: (musicItem: IMusicItem) => Promise<{ lyric: string; tlyric?: string }>;
-}
-
-// --- App Internal Types ---
 
 export interface Song {
   id: string;
   title: string;
   artist: string;
-  artistId?: string;
+  artistId?: string; // Link to artist detail
   album: string;
   coverUrl: string;
   source: MusicSource;
   duration: number; // in seconds
   audioUrl?: string; 
-  mvId?: string;
+  mvId?: string; // If present, song has a video. For Bilibili, this is the bvid.
   isGray?: boolean;
-  fee?: number; 
-  lyric?: string;
-  
-  // Link to Plugin
-  pluginId?: string; // Matches IPlugin.platform
-  pluginData?: IMusicItem; // Store original data for getMediaSource
+  fee?: number; // 0: free, 1: VIP, 8: SQ
+  lyric?: string; // LRC format string
+  pluginId?: string; // Specifically for PLUGIN source
 }
 
 export interface Artist {
@@ -82,7 +38,7 @@ export interface Playlist {
   description?: string;
   songs: Song[];
   coverUrl?: string;
-  isSystem?: boolean; 
+  isSystem?: boolean; // e.g. "My Favorites"
 }
 
 export interface UserProfile {
@@ -91,12 +47,19 @@ export interface UserProfile {
   avatarUrl: string;
   isVip: boolean;
   platform: 'netease' | 'guest';
-  cookie?: string; 
+  cookie?: string; // Store session cookie (MUSIC_U value)
 }
 
-export interface MusicPlugin extends IPlugin {
-    id: string; // Alias for platform, used internally
+export interface MusicPlugin {
+    id: string;
+    name: string;
+    version: string;
+    author: string;
+    sources: string[]; // e.g., ['kugou', 'bilibili']
     status: 'active' | 'disabled';
+    srcUrl?: string; // Where it was loaded from
+    search?: (query: string, page?: number, type?: string) => Promise<any[]>;
+    getMediaUrl?: (song: any) => Promise<{url: string, lyric?: string}>;
 }
 
 export interface DiagnosticResult {
