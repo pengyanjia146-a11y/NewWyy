@@ -1,61 +1,78 @@
-name: 🛠️ Fix Project Structure
+name: 🛠️ Universal Fix (Unzip & Move)
 
 on:
   push:
   workflow_dispatch:
 
 jobs:
-  fix-structure:
+  universal-fix:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 读写权限，用于移动文件
+      contents: write # 必须有写入权限才能保存解压后的文件
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: 🔍 Find Code & Move to Root
+      - name: 🛠️ Run Universal Fix
         run: |
-          echo "🔍 Searching for package.json..."
+          echo "🚀 Starting Universal Fix..."
+
+          # --- 第一阶段：暴力解压 ---
+          # 找到仓库里所有的 .zip 文件 (排除 .git 文件夹)
+          ZIP_FILE=$(find . -maxdepth 3 -name "*.zip" -not -path "*/.git/*" | head -n 1)
           
-          # 1. 查找 package.json (排除 node_modules)
+          if [ ! -z "$ZIP_FILE" ]; then
+            echo "📦 Found zip file: $ZIP_FILE"
+            echo "📂 Unzipping..."
+            unzip -o "$ZIP_FILE" -d .
+            echo "✅ Unzip complete."
+            
+            # (可选) 解压后删除原来的压缩包，防止下次误判
+            # rm "$ZIP_FILE" 
+          else
+            echo "ℹ️ No zip file found. Assuming code is already unzipped."
+          fi
+
+          # --- 第二阶段：寻找 package.json 并归位 ---
+          echo "🔍 Searching for package.json..."
+          # 查找 package.json，排除 node_modules
           PKG_PATH=$(find . -name "package.json" -not -path "*/node_modules/*" | head -n 1)
 
           if [ -z "$PKG_PATH" ]; then
-            echo "❌ Error: 找不到 package.json！请确认你是否上传了代码。"
-            # 列出当前所有文件帮助排查
-            find . -maxdepth 3 -not -path '*/.*'
-            exit 1
+            echo "❌ CRITICAL ERROR: Unzipped everything but still can't find package.json!"
+            echo "👇 Here is the file structure (check if the zip was empty or corrupted):"
+            ls -R
+            exit 1 # 真的找不到了，报错停止
           fi
 
-          echo "✅ Found package.json at: $PKG_PATH"
+          echo "📍 Found package.json at: $PKG_PATH"
           
-          # 获取文件所在的目录
+          # 获取 package.json 所在的文件夹
           PKG_DIR=$(dirname "$PKG_PATH")
 
-          # 2. 判断是否在根目录
-          if [ "$PKG_DIR" == "." ]; then
-            echo "🎉 Good news! Code is already at the root. No action needed."
-            echo "✅ 你现在可以直接去运行 Build Debug APK 了！"
+          # 如果 package.json 不在根目录 (即目录不是 .)，就需要移动
+          if [ "$PKG_DIR" != "." ]; then
+            echo "🚚 Code is hidden in subfolder '$PKG_DIR'. Moving to root..."
+            
+            # 创建临时中转站
+            mkdir -p temp_root_fix
+            
+            # 把源码移动到中转站
+            cp -r "$PKG_DIR"/* temp_root_fix/
+            cp -r "$PKG_DIR"/.* temp_root_fix/ 2>/dev/null || true
+            
+            # 清空当前目录 (除了 .git, .github 和 temp_root_fix)
+            # 注意：保留 .github 文件夹是为了不删除 workflow 文件自己
+            find . -maxdepth 1 -not -name 'temp_root_fix' -not -name '.git' -not -name '.github' -not -name '.' -exec rm -rf {} +
+            
+            # 从中转站移回根目录
+            mv temp_root_fix/* .
+            mv temp_root_fix/.* . 2>/dev/null || true
+            rmdir temp_root_fix
+            
+            echo "✅ Move completed. Code is now strictly at root."
           else
-            echo "🚚 Moving files from '$PKG_DIR' to root..."
-            
-            # 创建临时目录防止冲突
-            mkdir -p temp_root
-            
-            # 把源码移动到临时目录
-            # 注意：这里使用 rsync 或 mv 的策略来移动
-            cp -r "$PKG_DIR"/* temp_root/
-            cp -r "$PKG_DIR"/.* temp_root/ 2>/dev/null || true
-            
-            # 清空当前目录 (除了 .git 和 temp_root)
-            find . -maxdepth 1 -not -name 'temp_root' -not -name '.git' -not -name '.' -exec rm -rf {} +
-            
-            # 从临时目录移回来
-            mv temp_root/* .
-            mv temp_root/.* . 2>/dev/null || true
-            rmdir temp_root
-            
-            echo "✅ Move completed. Code is now at repository root."
+            echo "✅ Code is already at root. Structure is perfect."
           fi
 
       - name: Commit Changes
@@ -64,10 +81,12 @@ jobs:
           git config --global user.email "actions@github.com"
           git add .
           
+          # 检查是否有变化需要提交
           if git diff --staged --quiet; then
-            echo "⚠️ No changes to commit."
+            echo "⚠️ No changes needed (maybe already fixed?)"
           else
-            git commit -m "chore: Move code to root directory [skip ci]"
+            # 这里的 [skip ci] 被去掉了，提交后会自动触发 Build
+            git commit -m "chore: Universal fix (Unzip & Move) [auto]"
             git push
-            echo "🚀 File structure fixed!"
+            echo "🚀 Fix applied and code pushed! Build should start now."
           fi
