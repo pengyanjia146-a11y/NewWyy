@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK (Final Fix)
 
 on:
   push:
@@ -8,7 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -26,39 +25,45 @@ jobs:
           java-version: '17'
 
       - name: Install Dependencies
-        run: npm install
+        run: npm install --no-audit
 
       - name: Build Web Assets
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096" # 解决内存溢出导致的 Code 1
         run: npx vite build
 
       - name: Capacitor Sync
-        run: |
-          # 核心修复：不再删除 android 目录，仅同步代码和插件
-          npx cap sync android
+        run: npx cap sync android # 核心：不删除 android 目录
 
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v3
         with:
-          gradle-version: '8.6' # 匹配项目所需版本
+          gradle-version: '8.6'
 
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
-          # 使用 assembleDebug 快速验证，或改为 assembleRelease
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --no-daemon
 
-      - name: Sign APK (Optional)
-        # 仅当配置了密钥时执行，防止 exit code 254
-        if: env.HAS_KEYSTORE == 'true'
+      - name: Sign & Build Release APK
+        if: ${{ secrets.KEYSTORE_BASE64 != '' }} # 正确的 Secrets 判断位置
         env:
-          HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          echo ${{ secrets.KEYSTORE_BASE64 }} | base64 -d > release.keystore
-          # 此处调用 build-tools 进行签名逻辑
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/release.keystore
+          cd android
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=release.keystore \
+            -Pandroid.injected.signing.store.password=$KEYSTORE_PASS \
+            -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
+            -Pandroid.injected.signing.key.password=$KEY_PASSWORD
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NewWyy-Debug-${{ github.run_number }}
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: NewWyy-Build-${{ github.run_number }}
+          path: android/app/build/outputs/apk/**/*.apk
