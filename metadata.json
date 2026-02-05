@@ -1,7 +1,0 @@
-{
-  "name": "Copy of UniStream 音乐",
-  "description": "基于 Gemini AI 的跨平台音乐聚合器，融合网易云音乐与 YouTube 音源，提供智能播放体验。",
-  "requestFramePermissions": [
-    "microphone"
-  ]
-}
