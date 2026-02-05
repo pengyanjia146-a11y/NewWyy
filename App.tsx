@@ -1,10 +1,9 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { musicService } from './services/geminiService';
 import { Player } from './components/Player';
 import { LoginModal } from './components/LoginModal';
 import { Toast, ToastType } from './components/Toast';
-import { HomeIcon, SearchIcon, LibraryIcon, NeteaseIcon, YouTubeIcon, BilibiliIcon, PlayIcon, LabIcon, PlaylistAddIcon, PluginFileIcon, MoreVerticalIcon, HeartIcon, DownloadIcon, NextPlanIcon, SettingsIcon, FolderIcon, ActivityIcon, TrashIcon, UserCheckIcon, UserPlusIcon, SmartphoneIcon } from './components/Icons';
+import { HomeIcon, SearchIcon, LibraryIcon, NeteaseIcon, YouTubeIcon, BilibiliIcon, PlayIcon, LabIcon, PluginFileIcon, HeartIcon, DownloadIcon, ChevronDownIcon, VideoIcon } from './components/Icons';
 import { Song, UserProfile, ViewState, MusicSource, Playlist, MusicPlugin, AudioQuality, Artist, DiagnosticResult } from './types';
 import { SecureImage } from './components/SecureImage';
 
@@ -19,8 +18,8 @@ export default function App() {
   // Audio Quality
   const [quality, setQuality] = useState<AudioQuality>('standard');
 
-  // Search Tabs
-  const [activeTab, setActiveTab] = useState<'ALL' | 'NETEASE' | 'BILIBILI' | 'YOUTUBE' | 'PLUGIN'>('ALL');
+  // Search Tabs (Added: ALL is default)
+  const [activeTab, setActiveTab] = useState<'ALL' | 'NETEASE' | 'BILIBILI' | 'YOUTUBE'>('ALL');
 
   // Toast State
   const [toast, setToast] = useState<{msg: string, type: ToastType, show: boolean}>({ msg: '', type: 'info', show: false });
@@ -41,7 +40,6 @@ export default function App() {
       const saved = localStorage.getItem('unistream_artists');
       return saved ? JSON.parse(saved) : [];
   });
-  const [activeArtist, setActiveArtist] = useState<{info: Artist, songs: Song[]} | null>(null);
 
   // Persistence Effect
   useEffect(() => {
@@ -65,8 +63,6 @@ export default function App() {
 
   // Plugins State
   const [installedPlugins, setInstalledPlugins] = useState<MusicPlugin[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const localFileInputRef = useRef<HTMLInputElement>(null);
   const [pluginLoading, setPluginLoading] = useState(false);
   const [pluginUrl, setPluginUrl] = useState('');
 
@@ -115,17 +111,6 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<Song[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
 
-  // Text Import State
-  const [showImport, setShowImport] = useState(false);
-  const [importText, setImportText] = useState('');
-  
-  // Netease Playlist Import State
-  const [showNeteaseImport, setShowNeteaseImport] = useState(false);
-  const [neteaseLink, setNeteaseLink] = useState('');
-
-  // Active Context Menu
-  const [menuSong, setMenuSong] = useState<Song | null>(null);
-  
   // Polling for logs when in Labs view
   useEffect(() => {
       let interval: any;
@@ -160,12 +145,6 @@ export default function App() {
           } catch(e) { console.error(e); }
       }
   };
-
-  useEffect(() => {
-    const handleClick = () => setMenuSong(null);
-    window.addEventListener('click', handleClick);
-    return () => window.removeEventListener('click', handleClick);
-  }, []);
 
   const runDiagnostics = async () => {
       setIsRunningDiagnostics(true);
@@ -229,7 +208,6 @@ export default function App() {
     }
   };
 
-  // Re-fetch when quality changes
   useEffect(() => {
       if(currentSong && isPlaying) {
           playSong(currentSong);
@@ -256,12 +234,9 @@ export default function App() {
   const handleDownload = async (song: Song) => {
       showToast(`正在解析下载地址: ${song.title}`, 'loading');
       try {
-          // Always try 'lossless' to get best possible link
           const details = await musicService.getSongDetails(song, 'lossless');
           if (!details.url) throw new Error("No URL");
-          
           showToast('调用系统下载器...', 'success');
-          // Use system browser/downloader for best stability
           window.open(details.url, '_system');
       } catch (e) {
           showToast('下载解析失败', 'error');
@@ -271,10 +246,8 @@ export default function App() {
   const handleToggleLike = (song: Song) => {
       const favList = playlists.find(p => p.id === 'fav');
       if (!favList) return;
-      
       const exists = favList.songs.some(s => s.id === song.id);
       let newSongs = [];
-      
       if (exists) {
           newSongs = favList.songs.filter(s => s.id !== song.id);
           showToast('已取消喜欢', 'info');
@@ -282,12 +255,10 @@ export default function App() {
           newSongs = [song, ...favList.songs];
           showToast('已添加到喜欢', 'success');
       }
-      
       const newPlaylists = playlists.map(p => p.id === 'fav' ? { ...p, songs: newSongs } : p);
       setPlaylists(newPlaylists);
   };
   
-  // New Feature: Install Plugin from URL
   const handleUrlInstall = async () => {
       if (!pluginUrl) return;
       setPluginLoading(true);
@@ -295,12 +266,9 @@ export default function App() {
       try {
           const res = await musicService.installPluginFromUrl(pluginUrl);
           if (res.success && res.code) {
-              // Save Code Persistence
               const savedCodes = JSON.parse(localStorage.getItem('unistream_plugins_code') || '[]');
-              // Avoid dupes simply by pushing, or can filter. Plugins are deduped by platform ID in service.
               savedCodes.push(res.code);
               localStorage.setItem('unistream_plugins_code', JSON.stringify(savedCodes));
-
               setInstalledPlugins([...musicService.getPlugins()]);
               setPluginUrl('');
               showToast('插件安装成功', 'success');
@@ -320,20 +288,24 @@ export default function App() {
       
       setSearchLoading(true);
       setSearchResults([]);
-      
-      // Update History
       if (!searchHistory.includes(searchQuery)) {
           setSearchHistory([searchQuery, ...searchHistory].slice(0, 10));
       }
 
+      // Calls the Unified Endpoint
       musicService.searchMusic(searchQuery, (songs) => {
           setSearchResults(prev => {
-              // Simple dedupe
               const existingIds = new Set(prev.map(s => s.id));
               const newItems = songs.filter(s => !existingIds.has(s.id));
               return [...prev, ...newItems];
           });
       }).finally(() => setSearchLoading(false));
+  };
+
+  // Filter results based on active tab
+  const getFilteredResults = () => {
+      if (activeTab === 'ALL') return searchResults;
+      return searchResults.filter(s => s.source === activeTab);
   };
 
   const renderHome = () => (
@@ -352,7 +324,6 @@ export default function App() {
               </div>
           </div>
           
-          {/* History / Recents */}
           {playHistory.length > 0 && (
               <div>
                   <h3 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">最近播放</h3>
@@ -369,7 +340,6 @@ export default function App() {
               </div>
           )}
 
-          {/* Fav Playlist */}
           <div className="bg-gradient-to-br from-red-900/40 to-black rounded-xl p-5 border border-white/5 relative overflow-hidden group cursor-pointer" onClick={() => { setActivePlaylist(playlists[0]); setView('LIBRARY'); }}>
               <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-125 transition-transform duration-500">
                   <HeartIcon size={120} fill="currentColor" />
@@ -388,16 +358,36 @@ export default function App() {
   const renderSearch = () => (
       <div className="flex flex-col h-full pb-24">
           <div className="p-4 sticky top-0 bg-dark/95 backdrop-blur z-20">
-              <form onSubmit={handleSearch} className="relative">
+              <form onSubmit={handleSearch} className="relative mb-4">
                   <input 
                       type="text" 
-                      placeholder="搜索歌曲、视频、插件资源..." 
+                      placeholder="同时搜索 网易云 / YouTube / Bilibili ..." 
                       className="w-full bg-white/10 border border-white/5 rounded-full py-3 pl-12 pr-4 text-sm focus:bg-white/15 transition-all outline-none"
                       value={searchQuery}
                       onChange={e => setSearchQuery(e.target.value)}
                   />
                   <SearchIcon className="absolute left-4 top-3 text-gray-400" size={20} />
               </form>
+
+              {/* Tabs */}
+              {searchResults.length > 0 && (
+                  <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                      {[
+                          { id: 'ALL', label: '全部' },
+                          { id: 'NETEASE', label: '网易云' },
+                          { id: 'BILIBILI', label: '哔哩哔哩' },
+                          { id: 'YOUTUBE', label: 'YouTube' }
+                      ].map(tab => (
+                          <button
+                              key={tab.id}
+                              onClick={() => setActiveTab(tab.id as any)}
+                              className={`px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${activeTab === tab.id ? 'bg-primary text-white' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}
+                          >
+                              {tab.label}
+                          </button>
+                      ))}
+                  </div>
+              )}
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 pt-0">
@@ -412,7 +402,7 @@ export default function App() {
                   </div>
               ) : (
                   <div className="space-y-2">
-                      {searchResults.map((song, i) => (
+                      {getFilteredResults().map((song, i) => (
                           <div key={`${song.id}-${i}`} className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/5 group active:scale-[0.98] transition-all" onClick={() => playSong(song)}>
                               <div className="w-12 h-12 rounded bg-gray-800 flex-shrink-0 overflow-hidden relative">
                                   <SecureImage src={song.coverUrl} className="w-full h-full object-cover" />
@@ -432,6 +422,7 @@ export default function App() {
                               </button>
                           </div>
                       ))}
+                      {getFilteredResults().length === 0 && <div className="text-center text-gray-500 text-xs py-10">该分类下无结果</div>}
                       {searchLoading && <div className="text-center py-4 text-gray-500 text-xs">搜索中...</div>}
                   </div>
               )}
@@ -442,28 +433,21 @@ export default function App() {
   const renderLabs = () => (
       <div className="p-4 pb-24 space-y-8 h-full overflow-y-auto">
           <h2 className="text-2xl font-bold flex items-center gap-2"><LabIcon className="text-primary" /> 实验室</h2>
-
-          {/* Plugin Manager - URL Install */}
+          
           <div className="bg-white/5 rounded-xl p-5 border border-white/10">
               <h3 className="font-bold mb-4 flex items-center gap-2"><PluginFileIcon size={20} /> 插件管理</h3>
-              
               <div className="flex gap-2 mb-4">
                   <input 
                       type="text" 
-                      placeholder="输入插件 JS 链接 (例如 GitHub Raw)"
+                      placeholder="输入插件 JS 链接"
                       className="flex-1 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs"
                       value={pluginUrl}
                       onChange={e => setPluginUrl(e.target.value)}
                   />
-                  <button 
-                      onClick={handleUrlInstall}
-                      disabled={pluginLoading}
-                      className="bg-primary hover:bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
-                  >
+                  <button onClick={handleUrlInstall} disabled={pluginLoading} className="bg-primary hover:bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-50">
                       {pluginLoading ? '下载中...' : '安装'}
                   </button>
               </div>
-
               <div className="space-y-2 max-h-40 overflow-y-auto">
                   {installedPlugins.length === 0 ? <p className="text-xs text-gray-500">暂无插件</p> : installedPlugins.map((p, i) => (
                       <div key={i} className="flex justify-between items-center bg-white/5 p-2 rounded text-xs">
@@ -477,7 +461,6 @@ export default function App() {
               </div>
           </div>
 
-          {/* Diagnostics */}
           <div className="bg-white/5 rounded-xl p-5 border border-white/10">
               <div className="flex justify-between items-center mb-4">
                   <h3 className="font-bold">网络与插件诊断</h3>
@@ -497,7 +480,6 @@ export default function App() {
               </div>
           </div>
 
-          {/* Debug Console */}
           <div className="bg-black/40 rounded-xl p-4 font-mono text-[10px] text-green-400/80 h-48 overflow-y-auto border border-white/5">
               {debugLogs.length === 0 && <span className="text-gray-600">Waiting for logs...</span>}
               {debugLogs.map((log, i) => <div key={i}>{log}</div>)}
@@ -507,7 +489,6 @@ export default function App() {
 
   return (
     <div className="fixed inset-0 bg-dark text-white overflow-hidden flex flex-col font-sans select-none">
-      {/* Main Content Area */}
       <div className="flex-1 overflow-hidden relative">
           {view === 'HOME' && renderHome()}
           {view === 'SEARCH' && renderSearch()}
@@ -515,7 +496,6 @@ export default function App() {
           {view === 'LABS' && renderLabs()}
       </div>
 
-      {/* Persistent Components */}
       <Player 
           currentSong={currentSong}
           isPlaying={isPlaying}
@@ -529,16 +509,9 @@ export default function App() {
           setQuality={setQuality}
       />
 
-      <Toast 
-          message={toast.msg} 
-          type={toast.type} 
-          isVisible={toast.show} 
-          onClose={() => setToast(prev => ({ ...prev, show: false }))} 
-      />
-
+      <Toast message={toast.msg} type={toast.type} isVisible={toast.show} onClose={() => setToast(prev => ({ ...prev, show: false }))} />
       {showLogin && <LoginModal onLogin={handleLoginSuccess} onClose={() => setShowLogin(false)} />}
 
-      {/* Bottom Navigation */}
       <div className="fixed bottom-0 left-0 right-0 bg-dark/95 border-t border-white/5 px-6 py-2 pb-safe flex justify-between items-center z-40 backdrop-blur-lg">
           <button onClick={() => setView('HOME')} className={`flex flex-col items-center gap-1 p-2 ${view === 'HOME' ? 'text-white' : 'text-gray-500'}`}>
               <HomeIcon size={24} />
