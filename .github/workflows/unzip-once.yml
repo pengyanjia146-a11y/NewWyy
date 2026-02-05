@@ -1,31 +1,53 @@
-name: 🛠️ Unzip Source Once
+name: 🛠️ Smart Unzip (Auto-Find)
 
 on:
   push:
   workflow_dispatch:
 
 jobs:
-  unzip-and-commit:
+  find-and-unzip:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # 读写权限
+      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Unzip File
+      - name: 🔍 Find and Unzip
         run: |
-          # 确保文件名和你上传的一致
-          ZIP_NAME="NewWyy/NewWyy-source.zip"
+          # 1. 自动查找仓库里唯一的 zip 文件
+          echo "📂 Searching for zip files..."
+          # 查找所有 .zip 文件，忽略 .git 目录
+          ZIP_FILE=$(find . -name "*.zip" -not -path "*/.git/*" | head -n 1)
 
-          if [ -f "$ZIP_NAME" ]; then
-            echo "✅ Found zip file: $ZIP_NAME"
-            unzip -o "$ZIP_NAME" -d .
-            echo "🎉 Unzip finished."
-          else
-            echo "❌ Error: File $ZIP_NAME not found!"
-            # 没找到文件不报错，避免红叉，方便排查
-            exit 0 
+          if [ -z "$ZIP_FILE" ]; then
+            echo "❌ Fatal Error: No .zip file found in the repository!"
+            echo "👇 Current file structure:"
+            ls -R
+            exit 1  # 这次找不到会直接报错红色，方便你知道
+          fi
+
+          echo "✅ Found zip file: $ZIP_FILE"
+
+          # 2. 解压
+          unzip -o "$ZIP_FILE" -d .
+          echo "🎉 Unzip finished."
+          
+          # 3. 智能移动：如果解压出来是在一个子文件夹里（比如 xxx-source/package.json）
+          # 我们自动把它里面的东西移出来，确保 package.json 在根目录
+          if [ ! -f "package.json" ]; then
+             echo "⚠️ package.json not in root. Searching..."
+             # 找 package.json 在哪
+             PKG_DIR=$(find . -name "package.json" -not -path "*/node_modules/*" | head -n 1 | xargs dirname)
+             
+             if [ ! -z "$PKG_DIR" ] && [ "$PKG_DIR" != "." ]; then
+               echo "🚚 Moving files from '$PKG_DIR' to root..."
+               # 移动所有文件到根目录
+               cp -r "$PKG_DIR"/* .
+               cp -r "$PKG_DIR"/.* . 2>/dev/null || true
+               # 删除原来的空文件夹
+               rm -rf "$PKG_DIR"
+             fi
           fi
 
       - name: Commit Changes
@@ -35,10 +57,9 @@ jobs:
           git add .
           
           if git diff --staged --quiet; then
-            echo "⚠️ No changes to commit."
+            echo "⚠️ No changes to commit. (Files might already exist)"
           else
-            # 🟢 关键修改：去掉了 [skip ci]，这样提交后会自动触发 Build 流程
             git commit -m "chore: Auto-unzip source code"
             git push
-            echo "🚀 Successfully pushed files! Build should start automatically."
+            echo "🚀 Done! Source code is now in the repository."
           fi
