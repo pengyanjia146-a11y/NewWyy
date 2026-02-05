@@ -1,11 +1,7 @@
-name: Build Debug APK (Auto Version)
+nname: 🛠️ Unzip Source Once
 
 on:
-  push:
-    branches:
-      - main
-      - master
-  # 允许手动点击 "Run workflow" 触发
+  push:        # <--- 改成 push，只要你提交代码它就跑
   workflow_dispatch:
 
 jobs:
