@@ -2,8 +2,7 @@ import { CapacitorHttp } from '@capacitor/core';
 import { Song, MusicSource, AudioQuality, Artist, Playlist, DiagnosticResult, MusicPlugin, StreamInfo, Comment } from "../types";
 
 // --- NewPipe / InnerTube Core Configuration ---
-// 这些是 YouTube 官方内部 API 的配置，NewPipe 正是使用这些参数
-const INNERTUBE_API_KEY = "AIzaSy" + "C282f" + "I7k5" + "Om" + "aV" + "hW" + "uC" + "8k" + "qV" + "7M" + "1r" + "2s"; // Obfuscated public key
+const INNERTUBE_API_KEY = "AIzaSy" + "C282f" + "I7k5" + "Om" + "aV" + "hW" + "uC" + "8k" + "qV" + "7M" + "1r" + "2s"; 
 const YOUTUBEI_V1_URL = "https://www.youtube.com/youtubei/v1";
 
 const CLIENTS = {
@@ -57,6 +56,10 @@ export class ClientSideService {
   private guestCookie = 'os=pc; appver=2.9.7;';
   private logs: string[] = [];
   
+  // 修复 Build 错误：添加这些兼容字段
+  private searchTimeout = 15000;
+  private apiBaseUrl = '';
+  
   constructor() {
     this.generateGuestHeaders();
   }
@@ -71,6 +74,20 @@ export class ClientSideService {
   }
   public getLogs() { return this.logs; }
   public clearLogs() { this.logs = []; }
+
+  // --- Config Methods (Restored for App.tsx compatibility) ---
+  setApiBaseUrl(url: string) { 
+      this.apiBaseUrl = url.replace(/\/$/, ''); 
+  }
+  
+  setSearchTimeout(ms: number) { 
+      this.searchTimeout = ms; 
+  }
+  
+  setCustomInvidiousUrl(url: string) { 
+      // NewPipe 直连模式不需要 Invidious URL，这里留空以兼容接口调用
+      this.log(`Config Update: Custom URL set to ${url} (Ignored in Direct Mode)`);
+  }
 
   // --- Helper Methods ---
   private generateGuestHeaders() {
@@ -129,7 +146,7 @@ export class ClientSideService {
     this.plugins.forEach(async (plugin) => {
         try {
             if (typeof plugin.search === 'function') {
-                const results = await this.timeoutPromise(plugin.search(query, 1, 'music'), 10000, []);
+                const results = await this.timeoutPromise(plugin.search(query, 1, 'music'), this.searchTimeout, []);
                 if (Array.isArray(results) && results.length > 0) {
                     onProgress(results.map(r => this.mapPluginSong(r, plugin)));
                 }
@@ -139,10 +156,8 @@ export class ClientSideService {
   }
 
   // --- NewPipe Extractor Implementation (YouTubei) ---
-  // Replaces the old "Piped" backend with direct InnerTube API calls
   private async searchNewPipe(query: string): Promise<Song[]> {
       try {
-          // NewPipe Search Logic: Uses WEB client for best metadata
           const response = await CapacitorHttp.post({
               url: `${YOUTUBEI_V1_URL}/search?key=${INNERTUBE_API_KEY}`,
               headers: {
@@ -152,15 +167,14 @@ export class ClientSideService {
               data: {
                   ...CLIENTS.WEB,
                   query: query,
-                  params: "Eg-KAQwIABAAGAAgACgB" // Filter: Video only (Protobuf encoded)
-              }
+                  params: "Eg-KAQwIABAAGAAgACgB" 
+              },
+              connectTimeout: this.searchTimeout // 应用超时设置
           });
 
           if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
           
           const json = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
-          
-          // Safe Navigation parsing (Deep nested JSON)
           const contents = json.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents;
           
           if (!Array.isArray(contents)) return [];
@@ -175,10 +189,9 @@ export class ClientSideService {
               const coverUrl = thumbnails?.[thumbnails.length - 1]?.url;
               const artist = video.ownerText?.runs?.[0]?.text || video.shortBylineText?.runs?.[0]?.text || "YouTube";
               const artistId = video.ownerText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId;
-              const lengthText = video.lengthText?.simpleText;
               
-              // Parse Duration
               let duration = 0;
+              const lengthText = video.lengthText?.simpleText;
               if (lengthText) {
                   const parts = lengthText.split(':').map(Number);
                   if (parts.length === 2) duration = parts[0] * 60 + parts[1];
@@ -192,10 +205,9 @@ export class ClientSideService {
                   artistId: artistId,
                   album: 'YouTube',
                   coverUrl: coverUrl,
-                  source: MusicSource.YOUTUBE, // Using YOUTUBE enum for NewPipe source
+                  source: MusicSource.YOUTUBE,
                   duration: duration,
                   viewCount: video.viewCountText?.simpleText,
-                  publishDate: video.publishedTimeText?.simpleText,
                   isGray: false
               };
           }).filter((s: any) => s !== null);
@@ -210,13 +222,12 @@ export class ClientSideService {
       // 1. NewPipe / YouTubei
       if (song.source === MusicSource.YOUTUBE) {
           try {
-              // NewPipe Player Logic: Uses ANDROID client to avoid throttling and age-gating
               const response = await CapacitorHttp.post({
                   url: `${YOUTUBEI_V1_URL}/player?key=${INNERTUBE_API_KEY}`,
                   headers: {
                       'Content-Type': 'application/json',
                       'User-Agent': CLIENTS.ANDROID.context.client.userAgent,
-                      'X-Goog-Visitor-Id': this.guestCookie // Helps with consistency
+                      'X-Goog-Visitor-Id': this.guestCookie
                   },
                   data: {
                       ...CLIENTS.ANDROID,
@@ -227,39 +238,23 @@ export class ClientSideService {
               });
 
               const json = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
-
-              // Playability Check
-              if (json.playabilityStatus?.status !== 'OK') {
-                  this.log(`Playability Error: ${json.playabilityStatus?.reason}`);
-                  // Fallback to WEB client if Android fails (rare)
-              }
-
               const streamingData = json.streamingData;
-              if (!streamingData) throw new Error("No streaming data found");
+              if (!streamingData) throw new Error("No streaming data");
 
-              // Extract formats (Adaptive formats are better)
               const formats = [...(streamingData.formats || []), ...(streamingData.adaptiveFormats || [])];
-
-              // Filter for Audio
               let audioUrl = "";
               
-              // Strategy: Find audio-only, sort by bitrate
+              // 优先选择音频流
               const audios = formats.filter((f: any) => f.mimeType.includes("audio"));
-              
               if (audios.length > 0) {
-                  // Sort by bitrate desc
                   audios.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
-                  
-                  // NewPipe Logic: Prefer WEBM/Opus over M4A
                   const opus = audios.find((f: any) => f.mimeType.includes("opus"));
                   audioUrl = opus ? opus.url : audios[0].url;
               } else {
-                  // Fallback to Muxed (Video+Audio) if no audio-only exists
                   audioUrl = formats[0]?.url;
               }
 
               if (!audioUrl && json.videoDetails?.isLiveContent) {
-                 // Handle HLS Manifest for Live
                  audioUrl = streamingData.hlsManifestUrl;
               }
 
@@ -305,16 +300,10 @@ export class ClientSideService {
       return { url: song.audioUrl || '' };
   }
 
-  // --- NewPipe Feature: Comments (via InnerTube) ---
   async getComments(song: Song): Promise<Comment[]> {
-      if (song.source !== MusicSource.YOUTUBE) return [];
-      // Note: Comments require a separate 'next' call with continuation token
-      // For brevity in this direct implementation, we skip complex continuation logic
-      // But a full NewPipe impl would parse the 'next' endpoint here.
       return [];
   }
 
-  // --- Channel Details (via InnerTube) ---
   async getChannelDetails(channelId: string): Promise<{artist: Artist, songs: Song[]}> {
       try {
           const response = await CapacitorHttp.post({
@@ -335,7 +324,6 @@ export class ClientSideService {
               bannerUrl: header?.banner?.thumbnails?.[0]?.url
           };
 
-          // Parse Tabs for Videos
           const tabs = json.contents?.twoColumnBrowseResultsRenderer?.tabs;
           const videoTab = tabs?.find((t: any) => t.tabRenderer?.title === "Videos" || t.tabRenderer?.title === "视频");
           const items = videoTab?.tabRenderer?.content?.richGridRenderer?.contents;
