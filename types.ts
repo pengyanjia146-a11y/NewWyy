@@ -1,4 +1,3 @@
-// 文件路径: types.ts
 export enum MusicSource {
   NETEASE = 'NETEASE',
   YOUTUBE = 'YOUTUBE',
@@ -11,11 +10,11 @@ export interface Song {
   id: string;
   title: string;
   artist: string;
-  artistId?: string; 
+  artistId?: string; // 对应 YouTube 的 Channel ID
   album: string;
   coverUrl: string;
   source: MusicSource;
-  duration: number; 
+  duration: number; // 秒
   audioUrl?: string; 
   mvId?: string; 
   isGray?: boolean;
@@ -23,10 +22,11 @@ export interface Song {
   lyric?: string; 
   pluginId?: string;
   
+  // NewPipe 扩展字段
   viewCount?: number;
   publishDate?: string;
   isLive?: boolean;
-  streamInfo?: StreamInfo; 
+  streamInfo?: StreamInfo; // 缓存的详细流地址
 }
 
 export interface StreamInfo {
@@ -40,7 +40,7 @@ export interface StreamInfo {
 export interface StreamQuality {
   url: string;
   format: string;
-  quality: string; 
+  quality: string; // e.g., "1080p", "128kbps"
   bitrate: number;
   isVideo: boolean;
 }
@@ -57,8 +57,8 @@ export interface Artist {
   coverUrl: string;
   description?: string;
   songSize?: number;
-  subscriberCount?: number; 
-  bannerUrl?: string; 
+  subscriberCount?: number; // 订阅数
+  bannerUrl?: string; // 频道 Banner
 }
 
 export interface Playlist {
@@ -69,10 +69,6 @@ export interface Playlist {
   coverUrl?: string;
   isSystem?: boolean;
   uploader?: string;
-  
-  // [修复] 必须显式定义这两个字段，否则 App.tsx 会报错
-  source?: 'LOCAL' | 'NETEASE'; 
-  trackCount?: number; 
 }
 
 export interface Comment {
