@@ -2,10 +2,10 @@ name: Build Debug APK (Auto Version)
 
 on:
   push:
+    # 这里的修改允许在所有分支上触发构建
     branches:
-      - main
-      - master
-  workflow_dispatch:
+      - '**' 
+  workflow_dispatch: # 允许你在 GitHub Actions 页面手动点击运行
 
 jobs:
   build:
@@ -28,7 +28,7 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      # 1. 修复 TS 配置并构建网页 (关闭严格模式)
+      # 1. 自动生成宽松的 TS 配置并构建网页版 (跳过严格类型检查以防报错导致打包失败)
       - name: Fix TS Config & Build
         run: |
           echo '{
@@ -54,51 +54,45 @@ jobs:
             "exclude": ["node_modules", "dist", "android", "vite.config.ts", "server.js"]
           }' > tsconfig.json
           
-          # 开始构建 dist
+          # 开始构建网页资源
           npm run build
 
-      # 2. 初始化 Capacitor 安卓环境
+      # 2. 初始化并同步 Capacitor 安卓环境
       - name: Setup Capacitor
         run: |
           npm install @capacitor/core @capacitor/cli @capacitor/android
           
-          # 如果没有 android 目录则自动创建
+          # 如果项目中没有 android 目录则自动创建
           if [ ! -d "android" ]; then
             echo "Android folder not found. Creating..."
             npx cap add android
           fi
           
-          # 同步资源
+          # 同步网页资源到安卓原生项目
           npx cap copy android
           npx cap sync android
 
-      # 🟢 3. 核心步骤：修改版本号
-      # 将 versionCode 修改为 GitHub 的 run_number (如 45)
-      # 将 versionName 修改为 1.0.0.45
+      # 3. 核心步骤：根据 GitHub 运行次数自动修改版本号 (防止安装包冲突)
       - name: Bump Android Version
         run: |
           echo "🚀 Bump version to 1.0.0.${{ github.run_number }}"
           cd android/app
           
-          # 使用 sed 命令直接修改 build.gradle 文件
+          # 修改 build.gradle 中的 versionCode 和 versionName
           sed -i 's/versionCode [0-9]\+/versionCode ${{ github.run_number }}/g' build.gradle
           sed -i 's/versionName "[^"]*"/versionName "1.0.0.${{ github.run_number }}"/g' build.gradle
-          
-          # 打印检查
-          grep "versionCode" build.gradle
-          grep "versionName" build.gradle
 
-      # 4. 构建 Debug 包 (自带签名，可直接安装)
+      # 4. 构建 Debug APK
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      # 5. 上传产物
+      # 5. 上传 APK 产物
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          # 文件名带上版本号，方便区分
+          # 文件名会包含版本号，例如 UniStream-v1.0.0.45
           name: UniStream-v1.0.0.${{ github.run_number }}
           path: android/app/build/outputs/apk/debug/*.apk
