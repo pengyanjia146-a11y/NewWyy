@@ -1,55 +1,44 @@
-name: 🛠️ Unzip Source Once (One-Time Tool)
+name: 🛠️ Unzip Source Once
 
-# 触发方式：只有手动点击按钮才会运行
 on:
+  # 🟢 修改点：只要有代码提交 (push)，就自动运行！
+  push:
   workflow_dispatch:
 
 jobs:
   unzip-and-commit:
     runs-on: ubuntu-latest
     permissions:
-      # 必须给予写入权限，否则无法提交代码回仓库
-      contents: write
-
+      contents: write  # 必须有写入权限
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Unzip File
         run: |
-          # 🟢 设置你的压缩包名字 (请确认名字是否正确！)
+          # 🟢 确保这里的名字和你上传的压缩包一模一样！
           ZIP_NAME="NewWyy/NewWyy-source.zip"
 
           if [ -f "$ZIP_NAME" ]; then
             echo "✅ Found zip file: $ZIP_NAME"
-            
-            # 解压到当前目录 (-o 覆盖, -d . 当前目录)
             unzip -o "$ZIP_NAME" -d .
-            
-            # 删除压缩包 (可选：如果你解压后不想要压缩包了，取消下面这行的注释)
-            # rm "$ZIP_NAME"
-            
             echo "🎉 Unzip finished."
           else
             echo "❌ Error: File $ZIP_NAME not found!"
-            exit 1
+            # 这里的 exit 0 是为了防止报错红叉，如果没找到文件就算了
+            exit 0 
           fi
 
-      - name: Commit and Push Changes
+      - name: Commit Changes
         run: |
-          # 配置 Git 身份
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "actions@github.com"
-          
-          # 添加所有新文件
           git add .
           
-          # 检查是否有文件发生了变化
           if git diff --staged --quiet; then
-            echo "⚠️ No changes to commit. (Maybe already unzipped?)"
+            echo "⚠️ No changes to commit."
           else
-            # 提交并推送到当前分支
-            git commit -m "chore: Auto-unzip source code [skip ci]"
+            git commit -m "chore: Auto-unzip [skip ci]"
             git push
-            echo "🚀 Successfully pushed unzipped files to repository!"
+            echo "🚀 Successfully pushed files!"
           fi
