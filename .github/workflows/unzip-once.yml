@@ -1,92 +1,79 @@
-name: 🛠️ Universal Fix (Unzip & Move)
+name: Build Android APK (Universal Fix)
 
 on:
   push:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
-  universal-fix:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # 必须有写入权限才能保存解压后的文件
+    
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: 🛠️ Run Universal Fix
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Dependencies
+        # 增加参数防止因网络抖动或权限导致的 254 错误
+        run: npm install --no-audit --progress=false
+
+      - name: Build Web Assets
+        # 增加内存限制，防止 Vite 在 Actions 中由于资源限制退出 (Code 1)
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
+        run: npx vite build
+
+      - name: Capacitor Sync
         run: |
-          echo "🚀 Starting Universal Fix..."
+          # 修正：绝不能执行 rm -rf android
+          # sync 会自动处理 web 资源拷贝和插件链接
+          npx cap sync android
 
-          # --- 第一阶段：暴力解压 ---
-          # 找到仓库里所有的 .zip 文件 (排除 .git 文件夹)
-          ZIP_FILE=$(find . -maxdepth 3 -name "*.zip" -not -path "*/.git/*" | head -n 1)
-          
-          if [ ! -z "$ZIP_FILE" ]; then
-            echo "📦 Found zip file: $ZIP_FILE"
-            echo "📂 Unzipping..."
-            unzip -o "$ZIP_FILE" -d .
-            echo "✅ Unzip complete."
-            
-            # (可选) 解压后删除原来的压缩包，防止下次误判
-            # rm "$ZIP_FILE" 
-          else
-            echo "ℹ️ No zip file found. Assuming code is already unzipped."
-          fi
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: '8.6'
 
-          # --- 第二阶段：寻找 package.json 并归位 ---
-          echo "🔍 Searching for package.json..."
-          # 查找 package.json，排除 node_modules
-          PKG_PATH=$(find . -name "package.json" -not -path "*/node_modules/*" | head -n 1)
-
-          if [ -z "$PKG_PATH" ]; then
-            echo "❌ CRITICAL ERROR: Unzipped everything but still can't find package.json!"
-            echo "👇 Here is the file structure (check if the zip was empty or corrupted):"
-            ls -R
-            exit 1 # 真的找不到了，报错停止
-          fi
-
-          echo "📍 Found package.json at: $PKG_PATH"
-          
-          # 获取 package.json 所在的文件夹
-          PKG_DIR=$(dirname "$PKG_PATH")
-
-          # 如果 package.json 不在根目录 (即目录不是 .)，就需要移动
-          if [ "$PKG_DIR" != "." ]; then
-            echo "🚚 Code is hidden in subfolder '$PKG_DIR'. Moving to root..."
-            
-            # 创建临时中转站
-            mkdir -p temp_root_fix
-            
-            # 把源码移动到中转站
-            cp -r "$PKG_DIR"/* temp_root_fix/
-            cp -r "$PKG_DIR"/.* temp_root_fix/ 2>/dev/null || true
-            
-            # 清空当前目录 (除了 .git, .github 和 temp_root_fix)
-            # 注意：保留 .github 文件夹是为了不删除 workflow 文件自己
-            find . -maxdepth 1 -not -name 'temp_root_fix' -not -name '.git' -not -name '.github' -not -name '.' -exec rm -rf {} +
-            
-            # 从中转站移回根目录
-            mv temp_root_fix/* .
-            mv temp_root_fix/.* . 2>/dev/null || true
-            rmdir temp_root_fix
-            
-            echo "✅ Move completed. Code is now strictly at root."
-          else
-            echo "✅ Code is already at root. Structure is perfect."
-          fi
-
-      - name: Commit Changes
+      - name: Build Debug APK
         run: |
-          git config --global user.name "GitHub Action Bot"
-          git config --global user.email "actions@github.com"
-          git add .
-          
-          # 检查是否有变化需要提交
-          if git diff --staged --quiet; then
-            echo "⚠️ No changes needed (maybe already fixed?)"
-          else
-            # 这里的 [skip ci] 被去掉了，提交后会自动触发 Build
-            git commit -m "chore: Universal fix (Unzip & Move) [auto]"
-            git push
-            echo "🚀 Fix applied and code pushed! Build should start now."
-          fi
+          cd android
+          chmod +x gradlew
+          # 使用 gradle-build-action 提供的缓存机制进行构建
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NewWyy-Debug-Build-${{ github.run_number }}
+          path: android/app/build/outputs/apk/debug/*.apk
+
+      - name: Sign & Build Release APK (Optional)
+        # 仅当你配置了 GitHub Secrets 才会运行
+        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/release.keystore
+          cd android
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=release.keystore \
+            -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASS }} \
+            -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} \
+            -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }}
+
+      - name: Upload Release APK
+        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: NewWyy-Release-Signed
+          path: android/app/build/outputs/apk/release/*.apk
