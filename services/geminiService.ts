@@ -1,4 +1,3 @@
-// 文件路径: services/geminiService.ts
 import { CapacitorHttp } from '@capacitor/core';
 import { Song, MusicSource, AudioQuality, Artist, Playlist, DiagnosticResult, MusicPlugin } from "../types";
 
@@ -78,6 +77,47 @@ export class ClientSideService {
       }
 
       return { url: '' };
+  }
+
+  // --- Login & User (Fixed) ---
+  
+  async getUserStatus(cookie: string): Promise<any> {
+      try {
+          const res = await CapacitorHttp.get({
+              url: `${this.apiBaseUrl}/api/login/status`,
+              params: { cookie }
+          });
+          return res.data;
+      } catch (e) {
+          return { code: 500, msg: 'Network Error' };
+      }
+  }
+
+  async getQrKey(): Promise<any> {
+      try {
+          const res = await CapacitorHttp.get({ url: `${this.apiBaseUrl}/api/login/qr/key` });
+          return res.data;
+      } catch (e) { return null; }
+  }
+
+  async createQr(key: string): Promise<any> {
+      try {
+          const res = await CapacitorHttp.get({ 
+              url: `${this.apiBaseUrl}/api/login/qr/create`,
+              params: { key }
+          });
+          return res.data;
+      } catch (e) { return null; }
+  }
+
+  async checkQr(key: string): Promise<any> {
+      try {
+          const res = await CapacitorHttp.get({ 
+              url: `${this.apiBaseUrl}/api/login/qr/check`,
+              params: { key }
+          });
+          return res.data;
+      } catch (e) { return null; }
   }
 
   // --- Plugin System ---
