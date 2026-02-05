@@ -1,4 +1,4 @@
-// 覆盖 server.js
+// 文件路径: server.js
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
@@ -11,7 +11,10 @@ const {
   login_qr_key, 
   login_qr_create, 
   login_qr_check,
-  user_account
+  user_account,
+  // [新增] 引入歌单相关 API
+  user_playlist,
+  playlist_track_all
 } = require('NeteaseCloudMusicApi');
 
 const app = express();
@@ -47,6 +50,64 @@ function getLocalIP() {
   return 'localhost';
 }
 
+// --- [新增] 获取用户歌单 API ---
+app.get('/api/user/playlists', async (req, res) => {
+    const { uid, cookie } = req.query;
+    if (!uid) return res.status(400).json({ error: 'UID required' });
+    
+    try {
+        const result = await user_playlist({
+            uid: uid,
+            limit: 30, // 获取前30个歌单
+            offset: 0,
+            cookie: cookie || ''
+        });
+        
+        const playlists = result.body.playlist.map(pl => ({
+            id: String(pl.id),
+            name: pl.name,
+            description: pl.description || '',
+            coverUrl: pl.coverImgUrl,
+            trackCount: pl.trackCount,
+            isSystem: false,
+            creator: pl.creator.nickname,
+            source: 'NETEASE' // 标记来源
+        }));
+        
+        res.json({ playlists });
+    } catch (e) {
+        console.error('Fetch Playlist Error:', e);
+        res.status(500).json({ error: 'Failed to fetch playlists' });
+    }
+});
+
+// --- [新增] 获取歌单详情 (歌单内的歌曲) API ---
+app.get('/api/playlist/detail', async (req, res) => {
+    const { id, cookie } = req.query;
+    try {
+        const result = await playlist_track_all({
+            id: id,
+            limit: 1000,
+            cookie: cookie || ''
+        });
+        
+        const songs = result.body.songs.map(s => ({
+            id: String(s.id),
+            title: s.name,
+            artist: s.ar.map(a => a.name).join('/'),
+            album: s.al.name,
+            coverUrl: s.al.picUrl,
+            source: 'NETEASE',
+            duration: Math.floor(s.dt / 1000),
+            fee: s.fee
+        }));
+        
+        res.json({ songs });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // --- API: 获取播放链接 (含代理逻辑) ---
 app.get('/api/url', async (req, res) => {
   const { id, source, cookie, type } = req.query; // type: 'audio' | 'video'
@@ -62,37 +123,26 @@ app.get('/api/url', async (req, res) => {
              result = await song_url({ id, level: 'standard', cookie: cookie || '' });
              url = result.body?.data?.[0]?.url;
           }
-          // 网易云通常可以直接播放，不需要代理，但也可能需要
-          // 如果网易云也播放失败，可以把下面这行改为返回代理地址
           if (url) return res.json({ url }); 
           return res.status(404).json({ error: 'Netease URL failed' });
 
-      // === YouTube (核心修改) ===
+      // === YouTube ===
       } else if (source === 'YOUTUBE') {
           if(!yt) return res.status(503).json({error: 'YouTube not ready'});
           
-          // 获取详细信息
           const info = await yt.getBasicInfo(id, 'ANDROID');
-          
-          // 自动选择最佳格式
           const formats = [...(info.streaming_data?.adaptive_formats || []), ...(info.streaming_data?.formats || [])];
           
           let targetFormat;
           if (type === 'video') {
-              // 视频模式：找带声音的 MP4 (itag 18/22) 或最佳视频流
-              targetFormat = formats.find(f => f.has_video && f.has_audio); // 优先混合流
+              targetFormat = formats.find(f => f.has_video && f.has_audio);
               if (!targetFormat) targetFormat = formats.filter(f => f.has_video).sort((a,b) => b.bitrate - a.bitrate)[0];
           } else {
-              // 音频模式 (默认)：找最佳音质 (webm/opus or m4a/mp4)
-              // 优先 m4a 以获得更好的兼容性
               const audioFormats = formats.filter(f => f.has_audio);
               targetFormat = audioFormats.find(f => f.container === 'm4a') || audioFormats[0];
           }
 
           if (targetFormat) {
-              // !!! 关键修改 !!!
-              // 不直接返回谷歌链接，而是返回本机代理链接
-              // 解决：跨域(CORS)、403 Forbidden、IP签名失效
               const proxyUrl = `${protocol}://${host}/api/proxy?url=${encodeURIComponent(targetFormat.url)}`;
               return res.json({ url: proxyUrl, original: targetFormat.url });
           }
@@ -100,7 +150,6 @@ app.get('/api/url', async (req, res) => {
 
       // === Bilibili ===
       } else if (source === 'BILIBILI') {
-          // B站逻辑保持不变，B站通常检查 Referer，代理也可以解决
           const viewRes = await axios.get(`https://api.bilibili.com/x/web-interface/view?bvid=${id}`);
           const cid = viewRes.data?.data?.cid;
           if (!cid) return res.status(404).json({ error: 'CID not found' });
@@ -109,7 +158,6 @@ app.get('/api/url', async (req, res) => {
           const realUrl = playRes.data?.data?.durl?.[0]?.url;
           
           if (realUrl) {
-              // B站强制代理 (因为有 Referer 限制)
               const proxyUrl = `${protocol}://${host}/api/proxy?url=${encodeURIComponent(realUrl)}&referer=https://www.bilibili.com/`;
               return res.json({ url: proxyUrl });
           }
@@ -121,13 +169,12 @@ app.get('/api/url', async (req, res) => {
   res.status(404).json({ error: 'Source not supported' });
 });
 
-// --- 新增: 万能流媒体代理 (The Stability Fix) ---
+// --- 万能流媒体代理 ---
 app.get('/api/proxy', async (req, res) => {
     const { url, referer } = req.query;
     if (!url) return res.status(400).send('URL required');
 
     try {
-        // 向源服务器请求流
         const response = await axios({
             method: 'get',
             url: url,
@@ -138,12 +185,10 @@ app.get('/api/proxy', async (req, res) => {
             }
         });
 
-        // 转发头部信息 (Content-Type, Content-Length 等) 以支持进度条
         if (response.headers['content-type']) res.setHeader('Content-Type', response.headers['content-type']);
         if (response.headers['content-length']) res.setHeader('Content-Length', response.headers['content-length']);
         if (response.headers['accept-ranges']) res.setHeader('Accept-Ranges', response.headers['accept-ranges']);
 
-        // 管道转发 (Pipe) 数据流
         response.data.pipe(res);
     } catch (e) {
         console.error('Proxy Error:', e.message);
@@ -151,17 +196,17 @@ app.get('/api/proxy', async (req, res) => {
     }
 });
 
-// --- Search API (保持不变，略作精简) ---
+// --- Search API ---
 app.get('/api/search', async (req, res) => {
     const { q } = req.query;
     if (!q) return res.status(400).json({ error: 'Query required' });
     
-    // ... (此处保持原本的搜索逻辑，代码太长省略，请保留之前的搜索代码) ...
-    // 为方便，这里提供一个简单的占位，请确保保留之前的 Search 代码
     const tasks = [];
     if(yt) tasks.push(yt.search(q, { type: 'video' }).then(d=>({source:'YOUTUBE', data: d.results})).catch(e=>({source:'YOUTUBE', error:e})));
-    // ... (网易云和B站的搜索)
-    // 简单合并返回
+    
+    // 网易云搜索
+    tasks.push(neteaseSearch({ keywords: q, limit: 10 }).then(d=>({source:'NETEASE', data: d.body.result?.songs})).catch(e=>({source:'NETEASE', error:e})));
+
     try {
         const results = await Promise.all(tasks);
         let songs = [];
@@ -175,13 +220,22 @@ app.get('/api/search', async (req, res) => {
                      source: 'YOUTUBE',
                      duration: item.duration?.seconds||0
                  }))];
+             } else if (r.source === 'NETEASE' && r.data) {
+                 songs = [...songs, ...r.data.map(item => ({
+                     id: String(item.id),
+                     title: item.name,
+                     artist: item.artists?.[0]?.name || 'Unknown',
+                     coverUrl: item.album?.artist?.img1v1Url || '', 
+                     source: 'NETEASE',
+                     duration: Math.floor(item.duration / 1000)
+                 }))];
              }
         });
         res.json({ songs });
     } catch(e) { res.status(500).json({error:e}); }
 });
 
-// Netease Login Endpoints (保持不变)
+// Netease Login Endpoints
 app.get('/api/login/qr/key', async (req, res) => { try { const r = await login_qr_key({ timestamp: Date.now() }); res.json(r.body); } catch(e){res.status(500).send(e)} });
 app.get('/api/login/qr/create', async (req, res) => { try { const r = await login_qr_create({ key: req.query.key, qrimg: true, timestamp: Date.now() }); res.json(r.body); } catch(e){res.status(500).send(e)} });
 app.get('/api/login/qr/check', async (req, res) => { try { const r = await login_qr_check({ key: req.query.key, timestamp: Date.now() }); res.json({...r.body, cookie: r.cookie}); } catch(e){res.status(500).send(e)} });
