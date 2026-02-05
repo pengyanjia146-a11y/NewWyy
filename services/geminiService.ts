@@ -95,12 +95,18 @@ export class ClientSideService {
       });
   }
 
-  // 自动检测最快的 Piped 节点
+  // 自动检测最快的 Piped 节点 (修复了 .head() 报错)
   private async checkBestInstance() {
       for (const instance of this.pipedInstances) {
           try {
               const start = Date.now();
-              const res = await CapacitorHttp.head({ url: `${instance}/streams/IsThisVideoIdReal` });
+              // 修复点：使用 .request({ method: 'HEAD' }) 代替不存在的 .head()
+              const res = await CapacitorHttp.request({
+                  method: 'HEAD',
+                  url: `${instance}/streams/IsThisVideoIdReal`,
+                  connectTimeout: 2000
+              });
+              
               if (res.status === 200 || res.status === 404) { // 404 means API is reachable
                  this.log(`Switched to fast node: ${instance} (${Date.now() - start}ms)`);
                  this.activePipedInstance = instance;
