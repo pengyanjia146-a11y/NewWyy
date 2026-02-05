@@ -26,7 +26,7 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      # 1. 彻底隔离备份文件夹，防止语法错误阻断构建
+      # 🟢 核心修复：添加 vite/client 类型支持，并显式指定包含文件
       - name: Fix TS Config & Build
         run: |
           echo '{
@@ -42,12 +42,14 @@ jobs:
               "isolatedModules": true,
               "noEmit": true,
               "jsx": "react-jsx",
-              "strict": false
+              "strict": false,
+              "types": ["vite/client"]
             },
             "include": ["src", "services", "components", "types.ts", "App.tsx", "index.tsx"], 
             "exclude": ["node_modules", "dist", "android", "saved_sources", "server.js"]
           }' > tsconfig.json
           
+          # 执行构建 (tsc && vite build)
           npm run build
 
       - name: Setup Capacitor
