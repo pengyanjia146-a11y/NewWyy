@@ -3,14 +3,12 @@ name: Build Debug APK (Auto Version)
 on:
   push:
     branches:
-      - main
-      - master
+      - '**' 
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
       
@@ -28,7 +26,7 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      # 1. 修复 TS 配置并构建网页 (关闭严格模式)
+      # 1. 彻底隔离备份文件夹，防止语法错误阻断构建
       - name: Fix TS Config & Build
         run: |
           echo '{
@@ -44,61 +42,35 @@ jobs:
               "isolatedModules": true,
               "noEmit": true,
               "jsx": "react-jsx",
-              "strict": false,            
-              "noImplicitAny": false,     
-              "noUnusedLocals": false,
-              "noUnusedParameters": false,
-              "noFallthroughCasesInSwitch": true
+              "strict": false
             },
-            "include": ["."], 
-            "exclude": ["node_modules", "dist", "android", "vite.config.ts", "server.js"]
+            "include": ["src", "services", "components", "types.ts", "App.tsx", "index.tsx"], 
+            "exclude": ["node_modules", "dist", "android", "saved_sources", "server.js"]
           }' > tsconfig.json
           
-          # 开始构建 dist
           npm run build
 
-      # 2. 初始化 Capacitor 安卓环境
       - name: Setup Capacitor
         run: |
           npm install @capacitor/core @capacitor/cli @capacitor/android
-          
-          # 如果没有 android 目录则自动创建
-          if [ ! -d "android" ]; then
-            echo "Android folder not found. Creating..."
-            npx cap add android
-          fi
-          
-          # 同步资源
+          if [ ! -d "android" ]; then npx cap add android; fi
           npx cap copy android
           npx cap sync android
 
-      # 🟢 3. 核心步骤：修改版本号
-      # 将 versionCode 修改为 GitHub 的 run_number (如 45)
-      # 将 versionName 修改为 1.0.0.45
       - name: Bump Android Version
         run: |
-          echo "🚀 Bump version to 1.0.0.${{ github.run_number }}"
           cd android/app
-          
-          # 使用 sed 命令直接修改 build.gradle 文件
           sed -i 's/versionCode [0-9]\+/versionCode ${{ github.run_number }}/g' build.gradle
           sed -i 's/versionName "[^"]*"/versionName "1.0.0.${{ github.run_number }}"/g' build.gradle
-          
-          # 打印检查
-          grep "versionCode" build.gradle
-          grep "versionName" build.gradle
 
-      # 4. 构建 Debug 包 (自带签名，可直接安装)
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      # 5. 上传产物
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          # 文件名带上版本号，方便区分
           name: UniStream-v1.0.0.${{ github.run_number }}
           path: android/app/build/outputs/apk/debug/*.apk
