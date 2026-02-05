@@ -1,3 +1,4 @@
+// 文件路径: services/geminiService.ts
 import { CapacitorHttp } from '@capacitor/core';
 import { Song, MusicSource, AudioQuality, Artist, Playlist, DiagnosticResult, MusicPlugin } from "../types";
 
@@ -46,26 +47,19 @@ export class ClientSideService {
   }
 
  async getSongDetails(song: Song, quality: AudioQuality = 'standard'): Promise<{url: string, lyric?: string}> {
-  // ... Plugin 逻辑保持不变 ...
-
   try {
-      // 增加 type 参数
-      // 如果你希望在某些情况下播放视频，可以根据 song 的属性传参
-      // 这里默认 'audio' 保证 NewPipe 风格的后台播放稳定性
       const type = 'audio'; 
-
       const response = await CapacitorHttp.get({
           url: `${this.apiBaseUrl}/api/url`,
           params: { 
               id: song.id, 
               source: song.source,
-              type: type 
+              type: type,
+              // 如果是网易云，可能需要带上 cookie，这里通常需要从 App 状态传，简化起见假设后端处理
           }
       });
 
       if (response.status === 200 && response.data.url) {
-          // 此时返回的是 http://192.168.x.x:3001/api/proxy?url=...
-          // 这个地址任何设备都能播放，不会有跨域问题
           return { url: response.data.url };
       }
   } catch (e: any) {
@@ -74,7 +68,7 @@ export class ClientSideService {
   return { url: '' };
 }
 
-  // --- Login & User (Fixed) ---
+  // --- Login & User ---
   
   async getUserStatus(cookie: string): Promise<any> {
       try {
@@ -88,31 +82,55 @@ export class ClientSideService {
       }
   }
 
+  // --- [新增] 网易云歌单同步 ---
+  async getUserPlaylists(uid: string, cookie?: string): Promise<Playlist[]> {
+      try {
+          const response = await CapacitorHttp.get({
+              url: `${this.apiBaseUrl}/api/user/playlists`,
+              params: { uid, cookie: cookie || '' }
+          });
+
+          if (response.status === 200 && response.data.playlists) {
+              return response.data.playlists.map((p: any) => ({
+                  id: p.id,
+                  name: p.name,
+                  description: p.description,
+                  coverUrl: p.coverUrl,
+                  isSystem: false,
+                  source: 'NETEASE', 
+                  songs: [] // 初始为空，懒加载
+              }));
+          }
+      } catch (e: any) {
+          this.log(`Get playlists failed: ${e.message}`);
+      }
+      return [];
+  }
+
+  async getPlaylistSongs(id: string, cookie?: string): Promise<Song[]> {
+      try {
+          const response = await CapacitorHttp.get({
+              url: `${this.apiBaseUrl}/api/playlist/detail`,
+              params: { id, cookie: cookie || '' }
+          });
+          if (response.status === 200 && response.data.songs) {
+              return response.data.songs;
+          }
+      } catch (e: any) {
+          this.log(`Get playlist detail failed: ${e.message}`);
+      }
+      return [];
+  }
+
+  // --- QR Code Login ---
   async getQrKey(): Promise<any> {
-      try {
-          const res = await CapacitorHttp.get({ url: `${this.apiBaseUrl}/api/login/qr/key` });
-          return res.data;
-      } catch (e) { return null; }
+      try { const res = await CapacitorHttp.get({ url: `${this.apiBaseUrl}/api/login/qr/key` }); return res.data; } catch (e) { return null; }
   }
-
   async createQr(key: string): Promise<any> {
-      try {
-          const res = await CapacitorHttp.get({ 
-              url: `${this.apiBaseUrl}/api/login/qr/create`,
-              params: { key }
-          });
-          return res.data;
-      } catch (e) { return null; }
+      try { const res = await CapacitorHttp.get({ url: `${this.apiBaseUrl}/api/login/qr/create`, params: { key } }); return res.data; } catch (e) { return null; }
   }
-
   async checkQr(key: string): Promise<any> {
-      try {
-          const res = await CapacitorHttp.get({ 
-              url: `${this.apiBaseUrl}/api/login/qr/check`,
-              params: { key }
-          });
-          return res.data;
-      } catch (e) { return null; }
+      try { const res = await CapacitorHttp.get({ url: `${this.apiBaseUrl}/api/login/qr/check`, params: { key } }); return res.data; } catch (e) { return null; }
   }
 
   // --- Plugin System ---
@@ -179,7 +197,6 @@ export class ClientSideService {
   }
 
   // --- Stubs ---
-  async getUserPlaylists(uid: string): Promise<Playlist[]> { return []; }
   async importNeteasePlaylist(id: string): Promise<Song[]> { return []; }
   async getDailyRecommendSongs(): Promise<Song[]> { return []; }
   async getArtistDetail(id: string): Promise<any> { return { artist: {id, name: 'Unknown'}, songs: [] }; }
