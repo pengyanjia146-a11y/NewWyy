@@ -1,20 +1,20 @@
+// 文件路径: services/geminiService.ts
 import { CapacitorHttp } from '@capacitor/core';
-import { Song, MusicSource, AudioQuality, Artist, Playlist, DiagnosticResult, MusicPlugin, Comment } from "../types";
+import { Song, MusicSource, AudioQuality, Artist, Playlist, DiagnosticResult, MusicPlugin } from "../types";
 
 export class ClientSideService {
-  private apiBaseUrl = 'http://localhost:3001'; // Default, can be changed in settings
+  private apiBaseUrl = 'http://localhost:3001'; 
   private plugins: MusicPlugin[] = [];
   private logs: string[] = [];
 
   // --- Configuration ---
   setApiBaseUrl(url: string) {
-      // Remove trailing slash
       this.apiBaseUrl = url.replace(/\/$/, '');
       this.log(`Backend set to: ${this.apiBaseUrl}`);
   }
 
-  setCustomInvidiousUrl(url: string) { /* Deprecated in favor of local backend */ }
-  setSearchTimeout(ms: number) { /* Handled by backend mostly */ }
+  setCustomInvidiousUrl(url: string) { /* Deprecated */ }
+  setSearchTimeout(ms: number) { /* Handled by backend */ }
 
   // --- Logger ---
   public log(msg: string) {
@@ -53,8 +53,10 @@ export class ClientSideService {
       if (song.source === MusicSource.PLUGIN && song.pluginId) {
           const plugin = this.plugins.find(p => p.id === song.pluginId);
           if (plugin && plugin.getMediaUrl) {
-              const res = await plugin.getMediaUrl(song);
-              return { url: typeof res === 'string' ? res : res.url };
+              try {
+                  const res = await plugin.getMediaUrl(song);
+                  return { url: typeof res === 'string' ? res : res.url };
+              } catch(e) {}
           }
       }
 
@@ -78,11 +80,51 @@ export class ClientSideService {
       return { url: '' };
   }
 
-  // --- Plugin System (Kept as is) ---
+  // --- Plugin System ---
   async importPlugin(code: string): Promise<boolean> {
-      // ... (Existing plugin logic)
-      return false; // Placeholder
+      try {
+          const bridgeFetch = async (url: string, options: any = {}) => {
+              const res = await CapacitorHttp.request({
+                  url,
+                  method: options.method || 'GET',
+                  headers: options.headers,
+                  data: options.body
+              });
+              return {
+                  ok: res.status >= 200 && res.status < 300,
+                  status: res.status,
+                  text: async () => (typeof res.data === 'string' ? res.data : JSON.stringify(res.data)),
+                  json: async () => (typeof res.data === 'object' ? res.data : JSON.parse(res.data)),
+                  headers: { get: (k: string) => res.headers[k] || res.headers[k.toLowerCase()] }
+              };
+          };
+
+          const sandbox = { module: { exports: {} }, fetch: bridgeFetch, console: console };
+          const run = new Function('module', 'exports', 'fetch', 'console', code);
+          run(sandbox.module, sandbox.module.exports, sandbox.fetch, sandbox.console);
+
+          const plugin = sandbox.module.exports as any;
+          const pid = plugin.platform || plugin.id;
+          
+          const normalized: MusicPlugin = {
+              id: pid,
+              name: plugin.name || pid || 'Unknown',
+              version: plugin.version || '0.0.1',
+              author: plugin.author || 'Unknown',
+              sources: [pid],
+              status: 'active',
+              search: plugin.search,
+              getMediaUrl: plugin.getMediaUrl || plugin.play 
+          };
+
+          this.plugins = this.plugins.filter(p => p.id !== normalized.id);
+          this.plugins.push(normalized);
+          return true;
+      } catch(e: any) {
+          return false;
+      }
   }
+
   getPlugins() { return this.plugins; }
 
   // --- Diagnostics ---
@@ -101,11 +143,11 @@ export class ClientSideService {
       }
   }
 
-  // --- Stubs for other methods ---
+  // --- Stubs ---
   async getUserPlaylists(uid: string): Promise<Playlist[]> { return []; }
   async importNeteasePlaylist(id: string): Promise<Song[]> { return []; }
   async getDailyRecommendSongs(): Promise<Song[]> { return []; }
-  async getArtistDetail(id: string): Promise<any> { return { artist: {name: 'Unknown'}, songs: [] }; }
+  async getArtistDetail(id: string): Promise<any> { return { artist: {id, name: 'Unknown'}, songs: [] }; }
   async getMvUrl(song: Song) { return null; }
 }
 
