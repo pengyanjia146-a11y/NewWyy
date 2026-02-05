@@ -1,24 +1,24 @@
-name: Build Debug APK
+name: Build Android APK
 
 on:
-  # 🟢 修改点：去掉分支限制，任何分支提交都跑
   push:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
+    
     steps:
-      - uses: actions/checkout@v4
-      
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          
+          cache: 'npm'
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -31,26 +31,34 @@ jobs:
       - name: Build Web Assets
         run: npx vite build
 
-      - name: Setup Capacitor & Android
+      - name: Capacitor Sync
         run: |
-          rm -rf android
-          npx cap add android
+          # 核心修复：不再删除 android 目录，仅同步代码和插件
           npx cap sync android
 
-      - name: Bump Android Version
-        run: |
-          cd android/app
-          sed -i 's/versionCode [0-9]\+/versionCode ${{ github.run_number }}/g' build.gradle
-          sed -i 's/versionName "[^"]*"/versionName "1.0.0.${{ github.run_number }}"/g' build.gradle
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: '8.6' # 匹配项目所需版本
 
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
+          # 使用 assembleDebug 快速验证，或改为 assembleRelease
           ./gradlew assembleDebug
 
-      - name: Upload Debug APK
+      - name: Sign APK (Optional)
+        # 仅当配置了密钥时执行，防止 exit code 254
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        run: |
+          echo ${{ secrets.KEYSTORE_BASE64 }} | base64 -d > release.keystore
+          # 此处调用 build-tools 进行签名逻辑
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: UniStream-v1.0.0.${{ github.run_number }}
+          name: NewWyy-Debug-${{ github.run_number }}
           path: android/app/build/outputs/apk/debug/*.apk
