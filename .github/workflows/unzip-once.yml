@@ -1,53 +1,61 @@
-name: 🛠️ Smart Unzip (Auto-Find)
+name: 🛠️ Fix Project Structure
 
 on:
   push:
   workflow_dispatch:
 
 jobs:
-  find-and-unzip:
+  fix-structure:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # 读写权限，用于移动文件
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: 🔍 Find and Unzip
+      - name: 🔍 Find Code & Move to Root
         run: |
-          # 1. 自动查找仓库里唯一的 zip 文件
-          echo "📂 Searching for zip files..."
-          # 查找所有 .zip 文件，忽略 .git 目录
-          ZIP_FILE=$(find . -name "*.zip" -not -path "*/.git/*" | head -n 1)
+          echo "🔍 Searching for package.json..."
+          
+          # 1. 查找 package.json (排除 node_modules)
+          PKG_PATH=$(find . -name "package.json" -not -path "*/node_modules/*" | head -n 1)
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "❌ Fatal Error: No .zip file found in the repository!"
-            echo "👇 Current file structure:"
-            ls -R
-            exit 1  # 这次找不到会直接报错红色，方便你知道
+          if [ -z "$PKG_PATH" ]; then
+            echo "❌ Error: 找不到 package.json！请确认你是否上传了代码。"
+            # 列出当前所有文件帮助排查
+            find . -maxdepth 3 -not -path '*/.*'
+            exit 1
           fi
 
-          echo "✅ Found zip file: $ZIP_FILE"
-
-          # 2. 解压
-          unzip -o "$ZIP_FILE" -d .
-          echo "🎉 Unzip finished."
+          echo "✅ Found package.json at: $PKG_PATH"
           
-          # 3. 智能移动：如果解压出来是在一个子文件夹里（比如 xxx-source/package.json）
-          # 我们自动把它里面的东西移出来，确保 package.json 在根目录
-          if [ ! -f "package.json" ]; then
-             echo "⚠️ package.json not in root. Searching..."
-             # 找 package.json 在哪
-             PKG_DIR=$(find . -name "package.json" -not -path "*/node_modules/*" | head -n 1 | xargs dirname)
-             
-             if [ ! -z "$PKG_DIR" ] && [ "$PKG_DIR" != "." ]; then
-               echo "🚚 Moving files from '$PKG_DIR' to root..."
-               # 移动所有文件到根目录
-               cp -r "$PKG_DIR"/* .
-               cp -r "$PKG_DIR"/.* . 2>/dev/null || true
-               # 删除原来的空文件夹
-               rm -rf "$PKG_DIR"
-             fi
+          # 获取文件所在的目录
+          PKG_DIR=$(dirname "$PKG_PATH")
+
+          # 2. 判断是否在根目录
+          if [ "$PKG_DIR" == "." ]; then
+            echo "🎉 Good news! Code is already at the root. No action needed."
+            echo "✅ 你现在可以直接去运行 Build Debug APK 了！"
+          else
+            echo "🚚 Moving files from '$PKG_DIR' to root..."
+            
+            # 创建临时目录防止冲突
+            mkdir -p temp_root
+            
+            # 把源码移动到临时目录
+            # 注意：这里使用 rsync 或 mv 的策略来移动
+            cp -r "$PKG_DIR"/* temp_root/
+            cp -r "$PKG_DIR"/.* temp_root/ 2>/dev/null || true
+            
+            # 清空当前目录 (除了 .git 和 temp_root)
+            find . -maxdepth 1 -not -name 'temp_root' -not -name '.git' -not -name '.' -exec rm -rf {} +
+            
+            # 从临时目录移回来
+            mv temp_root/* .
+            mv temp_root/.* . 2>/dev/null || true
+            rmdir temp_root
+            
+            echo "✅ Move completed. Code is now at repository root."
           fi
 
       - name: Commit Changes
@@ -57,9 +65,9 @@ jobs:
           git add .
           
           if git diff --staged --quiet; then
-            echo "⚠️ No changes to commit. (Files might already exist)"
+            echo "⚠️ No changes to commit."
           else
-            git commit -m "chore: Auto-unzip source code"
+            git commit -m "chore: Move code to root directory [skip ci]"
             git push
-            echo "🚀 Done! Source code is now in the repository."
+            echo "🚀 File structure fixed!"
           fi
