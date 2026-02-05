@@ -1,7 +1,10 @@
-nname: 🛠️ Unzip Source Once
+name: Build Debug APK (Auto Version)
 
 on:
-  push:        # <--- 改成 push，只要你提交代码它就跑
+  push:
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
 jobs:
@@ -27,45 +30,32 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      # 🟢 修改点 1：直接构建网页，跳过 tsc 检查
-      # 之前的 "Fix TS Config" 步骤虽然有用，但直接用 vite build 更稳妥，
-      # 确保即使有类型报错也能生成 dist 文件夹。
+      # 1. 构建网页资源
       - name: Build Web Assets
-        run: |
-          npx vite build
+        run: npx vite build
 
-      # 🟢 修改点 2：强制重置 Android 环境
-      # 这里的 rm -rf android 是关键。
-      # 它确保 CI 环境总是全新的，自动生成 gradlew 文件，防止“找不到文件”的报错。
+      # 2. 强制清理并重置 Android 环境
       - name: Setup Capacitor & Android
         run: |
-          echo "🧹 Cleaning old Android build..."
           rm -rf android
-          
-          echo "📦 Adding Android platform..."
           npx cap add android
-          
-          echo "🔄 Syncing assets..."
           npx cap sync android
 
-      # 3. 修改版本号 (保持不变)
+      # 3. 修改版本号
       - name: Bump Android Version
         run: |
-          echo "🚀 Bump version to 1.0.0.${{ github.run_number }}"
           cd android/app
-          
           sed -i 's/versionCode [0-9]\+/versionCode ${{ github.run_number }}/g' build.gradle
           sed -i 's/versionName "[^"]*"/versionName "1.0.0.${{ github.run_number }}"/g' build.gradle
 
-      # 4. 构建 Debug 包
+      # 4. 构建 APK
       - name: Build Debug APK
         run: |
           cd android
-          # 确保 gradlew 有执行权限 (因为是新生成的，所以一定存在)
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      # 5. 上传产物
+      # 5. 上传生成的 APK
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
