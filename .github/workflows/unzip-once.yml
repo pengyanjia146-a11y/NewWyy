@@ -1,7 +1,6 @@
 name: 🛠️ Unzip Source Once
 
 on:
-  # 🟢 修改点：只要有代码提交 (push)，就自动运行！
   push:
   workflow_dispatch:
 
@@ -9,14 +8,14 @@ jobs:
   unzip-and-commit:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # 必须有写入权限
+      contents: write  # 读写权限
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Unzip File
         run: |
-          # 🟢 确保这里的名字和你上传的压缩包一模一样！
+          # 确保文件名和你上传的一致
           ZIP_NAME="NewWyy/NewWyy-source.zip"
 
           if [ -f "$ZIP_NAME" ]; then
@@ -25,7 +24,7 @@ jobs:
             echo "🎉 Unzip finished."
           else
             echo "❌ Error: File $ZIP_NAME not found!"
-            # 这里的 exit 0 是为了防止报错红叉，如果没找到文件就算了
+            # 没找到文件不报错，避免红叉，方便排查
             exit 0 
           fi
 
@@ -38,7 +37,8 @@ jobs:
           if git diff --staged --quiet; then
             echo "⚠️ No changes to commit."
           else
-            git commit -m "chore: Auto-unzip [skip ci]"
+            # 🟢 关键修改：去掉了 [skip ci]，这样提交后会自动触发 Build 流程
+            git commit -m "chore: Auto-unzip source code"
             git push
-            echo "🚀 Successfully pushed files!"
+            echo "🚀 Successfully pushed files! Build should start automatically."
           fi
