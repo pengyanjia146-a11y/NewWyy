@@ -19,7 +19,6 @@ export const LyricsOverlay: React.FC<Props> = ({ song, isPlaying, currentTime, d
     const [activeIndex, setActiveIndex] = useState(0);
     const scrollRef = useRef<HTMLDivElement>(null);
 
-    // 解析歌词
     useEffect(() => {
         if (!song?.lyric) return setLyrics([{ time: 0, text: '暂无歌词' }]);
         const lines = song.lyric.split('\n');
@@ -35,7 +34,6 @@ export const LyricsOverlay: React.FC<Props> = ({ song, isPlaying, currentTime, d
         setLyrics(parsed);
     }, [song]);
 
-    // 滚动逻辑
     useEffect(() => {
         const idx = lyrics.findIndex((l, i) => {
             const next = lyrics[i + 1];
