@@ -36,7 +36,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Song[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'ALL' | 'NETEASE' | 'BILIBILI' | 'YOUTUBE'>('ALL'); // 恢复分区状态
+  const [activeTab, setActiveTab] = useState<'ALL' | 'NETEASE' | 'BILIBILI' | 'YOUTUBE'>('ALL');
 
   const [activePlaylist, setActivePlaylist] = useState<Playlist | null>(null);
 
@@ -107,7 +107,6 @@ export default function App() {
       setSearchResults([]); 
       await musicService.searchMusic(searchQuery, (newSongs) => {
           setSearchResults(prev => {
-              // 去重逻辑
               const existingIds = new Set(prev.map(s => s.id));
               return [...prev, ...newSongs.filter(s => !existingIds.has(s.id))];
           });
@@ -132,7 +131,6 @@ export default function App() {
 
   const renderHome = () => (
     <div className="space-y-8 animate-fade-in pb-40">
-      {/* 渐变 Banner (参考初始代码) */}
       <div className="relative h-48 md:h-64 rounded-2xl bg-gradient-to-r from-gray-900 to-primary overflow-hidden flex items-center p-6 shadow-2xl">
         <div className="relative z-10 w-full">
           <h1 className="text-3xl font-bold mb-2 text-white">UniStream</h1>
@@ -144,7 +142,6 @@ export default function App() {
              <div className="text-xs bg-white/20 px-2 py-1 rounded text-white">v2.6 Stable</div>
           </div>
         </div>
-        {/* 装饰性背景 */}
         <div className="absolute right-0 top-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
       </div>
 
@@ -165,7 +162,6 @@ export default function App() {
   );
 
   const renderSearch = () => {
-      // 本地筛选逻辑 (恢复分区)
       const filteredResults = searchResults.filter(s => {
           if (activeTab === 'ALL') return true;
           return s.source === activeTab;
@@ -186,7 +182,6 @@ export default function App() {
                 </div>
            </form>
 
-           {/* 搜索分区 Tabs (绘图恢复) */}
            <div className="flex gap-2 mb-6 overflow-x-auto no-scrollbar pb-2">
                 {[
                     { id: 'ALL', label: '全部' },
@@ -256,7 +251,7 @@ export default function App() {
                     <h2 className="text-2xl font-bold text-white">我的音乐</h2>
                 </div>
                 
-                {/* 订阅 (Subscriptions) - NewPipe 风格 */}
+                {/* 订阅 (Subscriptions) */}
                 <div className="mb-8">
                     <h3 className="font-bold text-lg mb-3 text-white">订阅 (Subscriptions)</h3>
                     {followedArtists.length === 0 ? (
@@ -285,3 +280,102 @@ export default function App() {
                             <p className="text-xs text-gray-400">{pl.songs.length} 首歌曲</p>
                         </div>
                     ))}
+                </div>
+              </>
+          ) : (
+              <div>
+                  <button onClick={() => setActivePlaylist(null)} className="text-sm text-gray-400 hover:text-white mb-4">← 返回</button>
+                  <h2 className="text-2xl font-bold mb-4">{activePlaylist.name}</h2>
+                  <div className="space-y-1">
+                      {activePlaylist.songs.map((song, idx) => (
+                          <div key={idx} className="flex items-center p-3 rounded-lg hover:bg-white/5 cursor-pointer" onClick={() => playSong(song, activePlaylist.songs)}>
+                              <div className="flex-1">
+                                  <div className="font-medium text-white">{song.title}</div>
+                                  <div className="text-xs text-gray-400">{song.artist}</div>
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+              </div>
+          )}
+      </div>
+  );
+
+  const renderSettings = () => (
+    <div className="pb-40 animate-fade-in">
+         <h2 className="text-2xl font-bold mb-6 flex items-center gap-2"><SettingsIcon /> 设置</h2>
+         <div className="bg-white/5 p-4 rounded-xl">
+             <h3 className="font-bold mb-4 border-b border-white/10 pb-2">后端设置</h3>
+             <div className="mb-4">
+                 <label className="block text-xs text-gray-400 mb-1">后端 API 地址 (例如 http://192.168.1.5:3001)</label>
+                 <input type="text" value={settings.apiBaseUrl} onChange={(e) => setSettings({...settings, apiBaseUrl: e.target.value})} className="w-full bg-black/20 border border-white/10 rounded p-2 text-sm text-white"/>
+             </div>
+             <button onClick={saveSettings} className="bg-primary px-4 py-2 rounded-lg text-sm font-bold w-full">保存设置</button>
+         </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-dark text-white flex flex-col md:flex-row">
+      <Toast message={toast.msg} type={toast.type} isVisible={toast.show} onClose={() => setToast(t => ({...t, show: false}))} />
+      
+      {/* Desktop Nav */}
+      <div className="hidden md:flex flex-col w-64 border-r border-white/5 p-6 bg-dark">
+        <div className="flex items-center gap-2 mb-10 text-xl font-bold">UniStream</div>
+        <nav className="space-y-2 flex-1">
+          <NavBtn icon={<HomeIcon />} label="首页" active={view === 'HOME'} onClick={() => setView('HOME')} />
+          <NavBtn icon={<SearchIcon />} label="搜索" active={view === 'SEARCH'} onClick={() => setView('SEARCH')} />
+          <NavBtn icon={<LibraryIcon />} label="我的音乐" active={view === 'LIBRARY'} onClick={() => setView('LIBRARY')} />
+          <NavBtn icon={<SettingsIcon />} label="设置" active={view === 'SETTINGS'} onClick={() => setView('SETTINGS')} />
+        </nav>
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 h-screen overflow-y-auto no-scrollbar relative">
+        <div className="p-4 md:p-8 max-w-5xl mx-auto">
+          {view === 'HOME' && renderHome()}
+          {view === 'SEARCH' && renderSearch()}
+          {view === 'LIBRARY' && renderLibrary()}
+          {view === 'SETTINGS' && renderSettings()}
+        </div>
+      </div>
+      
+      {/* Mobile Nav */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-dark-light/90 backdrop-blur-lg border-t border-white/5 flex justify-around items-center py-3 pb-safe z-50">
+          <MobileNavBtn icon={<HomeIcon />} label="首页" active={view === 'HOME'} onClick={() => setView('HOME')} />
+          <MobileNavBtn icon={<SearchIcon />} label="搜索" active={view === 'SEARCH'} onClick={() => setView('SEARCH')} />
+          <MobileNavBtn icon={<LibraryIcon />} label="我的" active={view === 'LIBRARY'} onClick={() => setView('LIBRARY')} />
+          <MobileNavBtn icon={<SettingsIcon />} label="设置" active={view === 'SETTINGS'} onClick={() => setView('SETTINGS')} />
+      </div>
+
+      <div className={`transition-all duration-300 ${currentSong ? 'mb-16 md:mb-0' : ''}`}>
+         <Player 
+            currentSong={currentSong} 
+            isPlaying={isPlaying} 
+            onPlayPause={togglePlayPause} 
+            onNext={handleNext} 
+            onPrev={handlePrev} 
+            onToggleLike={handleToggleLike} 
+            onDownload={handleDownload} 
+            isLiked={playlists.length > 0 && playlists[0].songs ? playlists[0].songs.some(s=>s.id===currentSong?.id) : false} 
+            quality={quality}
+            setQuality={setQuality}
+         />
+      </div>
+
+      {showLogin && <LoginModal onLogin={handleLoginSuccess} onClose={() => setShowLogin(false)} />}
+    </div>
+  );
+}
+
+const NavBtn = ({ icon, label, active, onClick }: any) => (
+  <button onClick={onClick} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl ${active ? 'bg-white/10 text-white' : 'text-gray-400'}`}>
+    {React.cloneElement(icon, { size: 20 })}<span>{label}</span>
+  </button>
+);
+
+const MobileNavBtn = ({ icon, label, active, onClick }: any) => (
+    <button onClick={onClick} className={`flex flex-col items-center space-y-1 ${active ? 'text-white' : 'text-gray-500'}`}>
+        {React.cloneElement(icon, { size: 20 })}<span className="text-[10px]">{label}</span>
+    </button>
+);
