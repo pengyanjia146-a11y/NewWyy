@@ -1,3 +1,4 @@
+// 文件路径: server.js
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
@@ -106,7 +107,7 @@ const mapBiliSong = (item) => {
 
 // --- API Endpoints ---
 
-// 1. Search API
+// 1. Unified Search API
 app.get('/api/search', async (req, res) => {
   const { q } = req.query;
   const cookie = req.query.cookie || ''; 
@@ -211,6 +212,20 @@ app.get('/api/url', async (req, res) => {
   }
 
   res.status(404).json({ error: 'Source not supported' });
+});
+
+// Netease Login
+app.get('/api/login/qr/key', async (req, res) => {
+    try { const r = await login_qr_key({ timestamp: Date.now() }); res.json(r.body); } catch(e){res.status(500).send(e)}
+});
+app.get('/api/login/qr/create', async (req, res) => {
+    try { const r = await login_qr_create({ key: req.query.key, qrimg: true, timestamp: Date.now() }); res.json(r.body); } catch(e){res.status(500).send(e)}
+});
+app.get('/api/login/qr/check', async (req, res) => {
+    try { const r = await login_qr_check({ key: req.query.key, timestamp: Date.now() }); res.json({...r.body, cookie: r.cookie}); } catch(e){res.status(500).send(e)}
+});
+app.get('/api/login/status', async (req, res) => {
+    try { const r = await user_account({ cookie: req.query.cookie }); res.json(r.body); } catch(e){res.status(500).send(e)}
 });
 
 app.listen(PORT, '0.0.0.0', () => {
