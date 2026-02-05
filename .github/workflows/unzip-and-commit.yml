@@ -10,25 +10,12 @@ jobs:
   unzip:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-
-      - name: Ensure unzip installed
-        run: sudo apt-get update && sudo apt-get install -y unzip
-
-      - name: List repo root
-        run: ls -la
-
-      - name: Unzip archive
-        run: |
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y unzip rsync
+      - run: |
           unzip -o NewWyy_SourceCode.zip -d extracted
-          ls -la extracted | sed -n '1,200p'
-
-      - name: Copy extracted into repo
-        run: |
           rsync -a --delete extracted/ ./
+      - run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
