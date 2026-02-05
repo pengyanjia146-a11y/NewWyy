@@ -22,7 +22,8 @@ export default function App() {
   // Persistence
   const [playlists, setPlaylists] = useState<Playlist[]>(() => {
       const saved = localStorage.getItem('unistream_playlists');
-      return saved ? JSON.parse(saved) : [{ id: 'fav', name: '我喜欢的音乐', description: '红心收藏', songs: [], isSystem: true, coverUrl: 'https://picsum.photos/300?99' }];
+      // 默认为 LOCAL 来源
+      return saved ? JSON.parse(saved) : [{ id: 'fav', name: '我喜欢的音乐', description: '红心收藏', songs: [], isSystem: true, coverUrl: 'https://picsum.photos/300?99', source: 'LOCAL' }];
   });
   
   const [followedArtists, setFollowedArtists] = useState<Artist[]>(() => {
@@ -46,6 +47,7 @@ export default function App() {
       localStorage.setItem('unistream_artists', JSON.stringify(followedArtists));
   }, [playlists, followedArtists]);
 
+  // [修改] 初始化逻辑：加载设置、用户并同步歌单
   useEffect(() => {
       const savedSettings = localStorage.getItem('unistream_settings');
       if (savedSettings) {
@@ -55,12 +57,38 @@ export default function App() {
       }
       
       const savedUser = localStorage.getItem('unistream_user');
-      if (savedUser) setUser(JSON.parse(savedUser));
+      if (savedUser) {
+          const u = JSON.parse(savedUser);
+          setUser(u);
+          // 启动时尝试同步
+          syncNeteasePlaylists(u);
+      }
   }, []);
 
   const showToast = (msg: string, type: ToastType = 'info') => setToast({ msg, type, show: true });
 
   // --- Logic ---
+  
+  // [新增] 同步网易云歌单
+  const syncNeteasePlaylists = async (u: UserProfile) => {
+      if (u.platform !== 'netease' || !u.cookie) return;
+      
+      showToast('正在同步网易云歌单...', 'loading');
+      try {
+          const neteasePlaylists = await musicService.getUserPlaylists(u.id, u.cookie);
+          
+          setPlaylists(prev => {
+              // 1. 保留本地创建的歌单 (source !== 'NETEASE') 和 红心收藏
+              const localLists = prev.filter(p => p.id === 'fav' || p.source !== 'NETEASE');
+              // 2. 合并网易云歌单
+              return [...localLists, ...neteasePlaylists];
+          });
+          showToast(`已同步 ${neteasePlaylists.length} 个歌单`, 'success');
+      } catch (e) {
+          showToast('歌单同步失败', 'error');
+      }
+  };
+
   const playSong = async (song: Song, newQueue?: Song[]) => {
     setIsPlaying(false);
     setCurrentSong(song);
@@ -120,11 +148,31 @@ export default function App() {
       showToast('设置已保存', 'success');
   };
 
+  // [修改] 登录成功逻辑
   const handleLoginSuccess = (u: UserProfile) => {
       setUser(u);
       localStorage.setItem('unistream_user', JSON.stringify(u));
       setShowLogin(false);
       showToast(`欢迎, ${u.nickname}`, 'success');
+      // 登录后立即同步
+      syncNeteasePlaylists(u);
+  };
+
+  // [新增] 歌单点击处理 (懒加载)
+  const handlePlaylistClick = async (pl: Playlist) => {
+      if (pl.songs.length === 0 && pl.source === 'NETEASE' && user?.cookie) {
+          showToast('加载歌单歌曲...', 'loading');
+          const songs = await musicService.getPlaylistSongs(pl.id, user.cookie);
+          if (songs.length > 0) {
+              const updatedPl = { ...pl, songs };
+              setPlaylists(prev => prev.map(p => p.id === pl.id ? updatedPl : p));
+              setActivePlaylist(updatedPl);
+              return;
+          } else {
+              showToast('歌单为空或加载失败', 'error');
+          }
+      }
+      setActivePlaylist(pl);
   };
 
   // --- Renders ---
@@ -249,6 +297,15 @@ export default function App() {
               <>
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-2xl font-bold text-white">我的音乐</h2>
+                    {/* [新增] 手动同步按钮 */}
+                    {user?.cookie && (
+                        <button 
+                            onClick={() => syncNeteasePlaylists(user)}
+                            className="text-xs bg-white/10 hover:bg-white/20 px-3 py-1 rounded-full text-gray-300 transition-colors flex items-center gap-1"
+                        >
+                            <span>↻</span> 同步网易云
+                        </button>
+                    )}
                 </div>
                 
                 {/* 订阅 (Subscriptions) */}
@@ -271,13 +328,14 @@ export default function App() {
                 <h3 className="font-bold text-lg mb-3 text-white">我的歌单</h3>
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                     {playlists.map(pl => (
-                        <div key={pl.id} onClick={() => setActivePlaylist(pl)} className="group cursor-pointer bg-white/5 p-3 rounded-xl hover:bg-white/10 transition-colors">
+                        <div key={pl.id} onClick={() => handlePlaylistClick(pl)} className="group cursor-pointer bg-white/5 p-3 rounded-xl hover:bg-white/10 transition-colors relative">
                             <div className="relative aspect-square rounded-lg overflow-hidden mb-3 bg-gray-800">
                                 <SecureImage src={pl.coverUrl!} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                                 {pl.id === 'fav' && <div className="absolute top-2 right-2 bg-red-500 p-1.5 rounded-full shadow-lg"><HeartIcon size={12} fill="white" /></div>}
+                                {pl.source === 'NETEASE' && <div className="absolute top-2 left-2 bg-red-600/80 text-[10px] px-1.5 py-0.5 rounded text-white">网易云</div>}
                             </div>
                             <h3 className="font-bold truncate text-white">{pl.name}</h3>
-                            <p className="text-xs text-gray-400">{pl.songs.length} 首歌曲</p>
+                            <p className="text-xs text-gray-400">{pl.trackCount || pl.songs.length} 首歌曲</p>
                         </div>
                     ))}
                 </div>
@@ -311,6 +369,20 @@ export default function App() {
                  <input type="text" value={settings.apiBaseUrl} onChange={(e) => setSettings({...settings, apiBaseUrl: e.target.value})} className="w-full bg-black/20 border border-white/10 rounded p-2 text-sm text-white"/>
              </div>
              <button onClick={saveSettings} className="bg-primary px-4 py-2 rounded-lg text-sm font-bold w-full">保存设置</button>
+             
+             {/* 调试登录状态 */}
+             <div className="mt-8 border-t border-white/10 pt-4">
+                 <h3 className="font-bold mb-2">账户状态</h3>
+                 {user ? (
+                     <div className="text-sm text-gray-300">
+                         <p>已登录: {user.nickname}</p>
+                         <p className="text-xs text-gray-500 truncate">ID: {user.id}</p>
+                         <button onClick={() => { setUser(null); localStorage.removeItem('unistream_user'); window.location.reload(); }} className="mt-2 text-red-400 hover:text-red-300">退出登录</button>
+                     </div>
+                 ) : (
+                    <button onClick={() => setShowLogin(true)} className="bg-netease px-4 py-2 rounded-lg text-sm font-bold">登录网易云</button>
+                 )}
+             </div>
          </div>
     </div>
   );
