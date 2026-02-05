@@ -1,10 +1,8 @@
-name: Build Debug APK (Auto Version)
+name: Build Debug APK
 
 on:
+  # 🟢 修改点：去掉分支限制，任何分支提交都跑
   push:
-    branches:
-      - main
-      - master
   workflow_dispatch:
 
 jobs:
@@ -30,32 +28,27 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      # 1. 构建网页资源
       - name: Build Web Assets
         run: npx vite build
 
-      # 2. 强制清理并重置 Android 环境
       - name: Setup Capacitor & Android
         run: |
           rm -rf android
           npx cap add android
           npx cap sync android
 
-      # 3. 修改版本号
       - name: Bump Android Version
         run: |
           cd android/app
           sed -i 's/versionCode [0-9]\+/versionCode ${{ github.run_number }}/g' build.gradle
           sed -i 's/versionName "[^"]*"/versionName "1.0.0.${{ github.run_number }}"/g' build.gradle
 
-      # 4. 构建 APK
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      # 5. 上传生成的 APK
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
